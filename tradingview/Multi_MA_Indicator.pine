@@ -37,8 +37,8 @@ plot(sma240, color=color.rgb(226, 224, 85),    linewidth=3, title="SMA 240")
 //    (이 알람 1개로 아래 20종목 전부 커버됩니다)
 // =========================================================
 emaLen  = input.int(10, "알람 기준 EMA 길이", minval=1)
-// 공백("")=현재 차트 타임프레임 / 주봉 알람은 "W" / 일봉 알람은 "D"
-alertTF = input.timeframe("", "알람 타임프레임 (공백=현재 차트)")
+// "W"=주봉 / "D"=일봉 / 공백("")=현재 차트 타임프레임
+alertTF = input.timeframe("W", "알람 타임프레임 (기본=주봉)")
 
 // 한 종목의 EMA 상향/하향 돌파 여부 계산
 f_cross(simple string sym) =>
