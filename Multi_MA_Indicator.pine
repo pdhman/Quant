@@ -1,0 +1,26 @@
+//@version=6
+indicator("다중 MA", overlay=true)
+
+// request.security(심볼, 타임프레임, 표현식)
+// 일봉 기준 20일 이동평균 (어떤 타임프레임 차트에서든)
+// dailyMA20 = request.security(syminfo.tickerid, "D", ta.sma(close, 20))
+// dailyMA60 = request.security(syminfo.tickerid, "D", ta.sma(close, 60))
+// plot(dailyMA20, color=color.red, linewidth=2, title="일봉 MA20")
+// plot(dailyMA60, color=color.blue, linewidth=2, title="일봉 MA60")
+// 주봉 기준 10주 이동평균
+weeklyMA5 = request.security(syminfo.tickerid, "W", ta.ema(close, 5))
+plot(weeklyMA5, color=color.rgb(136, 247, 93), linewidth=2, title="주봉 MA5")
+
+weeklyMA10 = request.security(syminfo.tickerid, "W", ta.ema(close, 10))
+plot(weeklyMA10, color=color.rgb(245, 235, 100), linewidth=2, title="주봉 MA10")
+sma10  = ta.sma(close, 10)
+sma20  = ta.sma(close, 20)
+sma50  = ta.sma(close, 50)
+sma120 = ta.sma(close, 120)
+sma240 = ta.sma(close, 240)
+
+plot(sma10,  color=color.rgb(241, 247, 187),  linewidth=1, title="SMA 10")
+plot(sma20,  color=color.rgb(245, 58, 58),   linewidth=1, title="SMA 20")
+plot(sma50,  color=color.rgb(44, 23, 238),    linewidth=1, title="SMA 50")
+plot(sma120, color=color.rgb(203, 51, 230), linewidth=2, title="SMA 120")
+plot(sma240, color=color.rgb(226, 224, 85),    linewidth=3, title="SMA 240")
