@@ -1,0 +1,11 @@
+# 대용량 시세 데이터 (scripts/fetch_kospi_ohlcv_fdr.py 로 재생성)
+krx_ohlcv_*.csv
+kospi_ohlcv_data/
+
+# 시크릿/설정
+config.yaml
+
+# 파이썬
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
