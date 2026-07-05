@@ -1,0 +1,181 @@
+//@version=6
+// =====================================================================
+//  Victor Sperandeo 1-2-3 추세전환 규칙 + 2B 규칙
+// ---------------------------------------------------------------------
+//  참고: 빅터 스페란데오 「전설의 프로 트레이더 빅 2」 10장
+//        - 1-2-3 규칙: ① 추세선 돌파  ② 직전 고점/저점 재시험 실패  ③ 반등 저점/고점 돌파
+//        - 2B 규칙: 신고점(신저점) 경신 후 직전 고점(저점)을 되돌려 돌파하면 전환 신호
+//  구현: 피벗(프랙탈) 기반 추세선/스윙 감지 (Auto Trendline · S&R 아이디어 활용)
+//  주의: 재량적 개념을 규칙화한 '근사치'입니다. 기간(n)/시간프레임에 따라 신호가 달라집니다.
+// =====================================================================
+indicator("Sperandeo 1-2-3 & 2B", overlay=true, max_labels_count=500, max_lines_count=100)
+
+// ---------------- Inputs ----------------
+string gP  = "Pivot"
+int    n   = input.int(10, "Pivot(프랙탈) 기간", minval=2, group=gP)
+
+string g123 = "1-2-3 규칙"
+bool  show123 = input.bool(true,  "1-2-3 표시", group=g123)
+color colTop  = input.color(color.red,   "하락전환(상단) 색", group=g123)
+color colBot  = input.color(color.green, "상승전환(하단) 색", group=g123)
+bool  showTL  = input.bool(true,  "추세선 표시", group=g123)
+
+string g2b = "2B 규칙"
+bool  show2b = input.bool(true, "2B 표시", group=g2b)
+
+// ---------------- Pivots ----------------
+float ph = ta.pivothigh(n, n)
+float pl = ta.pivotlow(n, n)
+
+var float up1 = na
+var int   up1x = na
+var float up2 = na
+var int   up2x = na
+var float dn1 = na
+var int   dn1x = na
+var float dn2 = na
+var int   dn2x = na
+
+if not na(ph)
+    up2 := up1
+    up2x := up1x
+    up1 := ph
+    up1x := bar_index - n
+if not na(pl)
+    dn2 := dn1
+    dn2x := dn1x
+    dn1 := pl
+    dn1x := bar_index - n
+
+// ---------------- Trendlines (current) ----------------
+// 상승 지지선(저점들 연결) / 하락 저항선(고점들 연결)
+float slope_dn = (not na(dn1) and not na(dn2) and dn1x != dn2x) ? (dn1 - dn2) / (dn1x - dn2x) : na
+float slope_up = (not na(up1) and not na(up2) and up1x != up2x) ? (up1 - up2) / (up1x - up2x) : na
+float y_dn = not na(slope_dn) ? dn1 + slope_dn * (bar_index - dn1x) : na
+float y_up = not na(slope_up) ? up1 + slope_up * (bar_index - up1x) : na
+
+var line lnDn = na
+var line lnUp = na
+if showTL
+    if not na(y_dn)
+        if na(lnDn)
+            lnDn := line.new(dn2x, dn2, bar_index, y_dn, color=color.new(colBot, 30), width=1, style=line.style_dashed)
+        else
+            line.set_xy1(lnDn, dn2x, dn2)
+            line.set_xy2(lnDn, bar_index, y_dn)
+    if not na(y_up)
+        if na(lnUp)
+            lnUp := line.new(up2x, up2, bar_index, y_up, color=color.new(colTop, 30), width=1, style=line.style_dashed)
+        else
+            line.set_xy1(lnUp, up2x, up2)
+            line.set_xy2(lnUp, bar_index, y_up)
+
+// ---------------- Context / point-1 break ----------------
+bool upCtx = not na(slope_dn) and slope_dn > 0   // 상승추세(상승 저점) → 상단 하락전환 후보
+bool dnCtx = not na(slope_up) and slope_up < 0   // 하락추세(하락 고점) → 하단 상승전환 후보
+
+bool brk1_top = upCtx and ta.crossunder(close, y_dn)   // 상승추세선 하향 돌파
+bool brk1_bot = dnCtx and ta.crossover(close, y_up)    // 하락추세선 상향 돌파
+
+// ---------------- label helper ----------------
+mk(int x, float y, string txt, bool below, color col) =>
+    label.new(x, y, txt, style = below ? label.style_label_up : label.style_label_down, color = col, textcolor = color.white, size = size.small)
+
+// 알람용 이벤트 플래그 (매 봉 초기화)
+bool fireTop1 = false
+bool fireTop3 = false
+bool fireBot1 = false
+bool fireBot3 = false
+bool fire2Bbear = false
+bool fire2Bbull = false
+
+// ================= 상단: 하락전환 1-2-3 =================
+var int   topSt   = 0     // 0=대기, 1=점1완료, 2=점2완료
+var float topHigh = na    // 재시험 대상(직전 고점)
+var float topLow  = na    // 점3에서 깰 반등 저점
+
+if show123
+    // 무효화: 직전 고점 위로 신고점 → 상승추세 지속
+    if topSt != 0 and not na(topHigh) and high > topHigh
+        topSt := 0
+    // 점 1: 상승추세선 하향 돌파
+    if brk1_top and topSt == 0
+        topSt := 1
+        topHigh := up1
+        mk(bar_index, high, "1", false, colTop)
+        fireTop1 := true
+    // 점 2: 직전 고점 재시험 실패 (lower high)
+    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh
+        topSt := 2
+        topLow := dn1
+        mk(bar_index - n, ph, "2", false, colTop)
+    // 점 3: 반등 저점(지지) 하향 돌파
+    if topSt == 2 and not na(topLow) and ta.crossunder(close, topLow)
+        topSt := 0
+        mk(bar_index, high, "3", false, colTop)
+        fireTop3 := true
+
+// ================= 하단: 상승전환 1-2-3 =================
+var int   botSt   = 0
+var float botLow  = na    // 재시험 대상(직전 저점)
+var float botHigh = na    // 점3에서 넘을 반락 고점
+
+if show123
+    // 무효화: 직전 저점 아래로 신저점 → 하락추세 지속
+    if botSt != 0 and not na(botLow) and low < botLow
+        botSt := 0
+    // 점 1: 하락추세선 상향 돌파
+    if brk1_bot and botSt == 0
+        botSt := 1
+        botLow := dn1
+        mk(bar_index, low, "1", true, colBot)
+        fireBot1 := true
+    // 점 2: 직전 저점 재시험 실패 (higher low)
+    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow
+        botSt := 2
+        botHigh := up1
+        mk(bar_index - n, pl, "2", true, colBot)
+    // 점 3: 반락 고점(저항) 상향 돌파
+    if botSt == 2 and not na(botHigh) and ta.crossover(close, botHigh)
+        botSt := 0
+        mk(bar_index, low, "3", true, colBot)
+        fireBot3 := true
+
+// ================= 2B =================
+var float b2bTop = na
+var bool  b2bTopX = false
+var float b2bBot = na
+var bool  b2bBotX = false
+
+if show2b
+    // 하락형 2B: 직전 고점 경신 후 그 고점 아래로 마감
+    if not na(ph)
+        b2bTop := ph
+        b2bTopX := false
+    if not na(b2bTop)
+        if high > b2bTop
+            b2bTopX := true
+        if b2bTopX and close < b2bTop
+            mk(bar_index, high, "2B", false, colTop)
+            fire2Bbear := true
+            b2bTopX := false
+            b2bTop := na
+    // 상승형 2B: 직전 저점 경신 후 그 저점 위로 마감
+    if not na(pl)
+        b2bBot := pl
+        b2bBotX := false
+    if not na(b2bBot)
+        if low < b2bBot
+            b2bBotX := true
+        if b2bBotX and close > b2bBot
+            mk(bar_index, low, "2B", true, colBot)
+            fire2Bbull := true
+            b2bBotX := false
+            b2bBot := na
+
+// ---------------- Alerts ----------------
+alertcondition(fireTop1 or fireBot1, "점1: 추세선 돌파",          "Sperandeo 1: 추세선 돌파")
+alertcondition(fireTop3 or fireBot3, "점3: 추세전환 확정",        "Sperandeo 3: 추세전환 확정")
+alertcondition(fire2Bbear,           "2B 하락 신호",              "2B: 상단 반전(하락) 신호")
+alertcondition(fire2Bbull,           "2B 상승 신호",              "2B: 하단 반전(상승) 신호")
+alertcondition(fireTop1 or fireBot1 or fireTop3 or fireBot3 or fire2Bbear or fire2Bbull, "모든 신호", "Sperandeo 1-2-3 / 2B 신호 발생")
