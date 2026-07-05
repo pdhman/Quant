@@ -40,26 +40,31 @@ emaLen  = input.int(10, "알람 기준 EMA 길이", minval=1)
 // "W"=주봉 / "D"=일봉 / 공백("")=현재 차트 타임프레임
 alertTF = input.timeframe("W", "알람 타임프레임 (기본=주봉)")
 
-// 한 종목의 EMA 상향/하향 돌파 여부 계산
+// 한 종목의 EMA 상향/하향 돌파 여부 + 해당 봉의 시작시간 계산
 f_cross(simple string sym) =>
-    [u, d] = request.security(sym, alertTF, [ta.crossover(close, ta.ema(close, emaLen)), ta.crossunder(close, ta.ema(close, emaLen))])
-    [u, d]
+    [u, d, t] = request.security(sym, alertTF, [ta.crossover(close, ta.ema(close, emaLen)), ta.crossunder(close, ta.ema(close, emaLen)), time])
+    [u, d, t]
 
 // 종목별로 검사 후 돌파 시 알람 발송
+// 같은 봉(주봉)에서는 종목당 1회만 발송 → 주말/휴일에 차트 봉이 새로 생겨도 반복 알람 없음
 f_alert(simple string code, simple string name) =>
-    [up, dn] = f_cross("KRX:" + code)
+    [up, dn, barT] = f_cross("KRX:" + code)
+    var int lastUpBar = na
+    var int lastDnBar = na
     tag = name == "" ? code : name + "(" + code + ")"
-    if up
+    if up and barT != lastUpBar
         alert(tag + " 📈 EMA" + str.tostring(emaLen) + " 상향 돌파", alert.freq_once_per_bar)
-    if dn
+        lastUpBar := barT
+    if dn and barT != lastDnBar
         alert(tag + " 📉 EMA" + str.tostring(emaLen) + " 하향 돌파", alert.freq_once_per_bar)
+        lastDnBar := barT
 
 // ---- 보유 종목 ----
 f_alert("005930", "삼성전자")
 f_alert("000660", "SK하이닉스")
 f_alert("000150", "두산")
 f_alert("009150", "삼성전기")
-f_alert("122640", "")
+f_alert("122640", "예스티")
 f_alert("329180", "HD현대중공업")
 f_alert("009540", "HD한국조선해양")
 f_alert("095610", "테스")
