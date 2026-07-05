@@ -130,10 +130,10 @@ if upfract
 // }
 
 // Plotting fractals
-bool hh = upfract and recent_up1 > recent_up2 ? high[n+1] : na
-bool lh = upfract and recent_up1 < recent_up2 ? high[n+1] : na
-bool hl = downfract and recent_dn1 > recent_dn2 ? low[n+1] : na
-bool ll = downfract and recent_dn1 < recent_dn2 ? low[n+1] : na
+bool hh = upfract and recent_up1 > recent_up2
+bool lh = upfract and recent_up1 < recent_up2
+bool hl = downfract and recent_dn1 > recent_dn2
+bool ll = downfract and recent_dn1 < recent_dn2
 
 plotshape(show_hh and hh, style=shape.circle, size=size.tiny, offset=-n-1, title="HH", text="HH", location=location.abovebar, textcolor=col_hh, color=na, editable=false)
 plotshape(show_lh and lh, style=shape.circle, size=size.tiny, offset=-n-1, title="LH", text="LH", location=location.abovebar, textcolor=col_lh, color=na, editable=false)
