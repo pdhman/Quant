@@ -1,0 +1,201 @@
+//@version=6
+// =====================================================================
+//  Sperandeo 3 & 2B  —  Strategy (백테스트 버전)
+// ---------------------------------------------------------------------
+//  인디케이터 "Sperandeo 1-2-3 & 2B"의 신호를 그대로 사용하되,
+//  ▶ 점3(추세전환 확정) 신호와 ▶ 2B 신호로 진입/청산하여 백테스트합니다.
+//    - 매수: 하단 점3(상승전환) 또는 상승형 2B
+//    - 매도: 상단 점3(하락전환) 또는 하락형 2B
+//  신호는 봉 마감 시 확정(피벗 n봉 지연 → 룩어헤드 없음), 다음 봉 시가 체결.
+//  주의: 재량적 개념의 근사치입니다. 기간(n)/시간프레임/수수료 가정에 따라 결과가 달라집니다.
+// =====================================================================
+strategy("Sperandeo 3 & 2B Strategy", overlay=true, max_labels_count=500, max_lines_count=100,
+     initial_capital=10000000, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.15, pyramiding=0, calc_on_every_tick=false)
+
+// ---------------- Inputs ----------------
+string gP  = "Pivot"
+int    n   = input.int(10, "Pivot(프랙탈) 기간", minval=2, group=gP)
+
+string gBT = "백테스트 진입/청산"
+bool   useP3   = input.bool(true,  "점3(추세전환) 신호로 매매", group=gBT)
+bool   use2B   = input.bool(true,  "2B 신호로 매매", group=gBT)
+string dirMode = input.string("롱only", "매매 방향", options=["롱only","숏only","롱&숏"], group=gBT)
+bool   useSL   = input.bool(false, "손절 사용", group=gBT)
+float  slPerc  = input.float(8.0,  "손절 %", minval=0.0, step=0.5, group=gBT)
+bool   useTP   = input.bool(false, "익절 사용", group=gBT)
+float  tpPerc  = input.float(15.0, "익절 %", minval=0.0, step=0.5, group=gBT)
+bool   useDate = input.bool(false, "기간 제한", group=gBT)
+int    fromDate= input.time(timestamp("2016-01-01T00:00"), "시작", group=gBT)
+int    toDate  = input.time(timestamp("2027-01-01T00:00"), "종료", group=gBT)
+
+string gViz = "표시"
+bool  show123 = input.bool(true,  "1-2-3 라벨", group=gViz)
+bool  show2b  = input.bool(true,  "2B 라벨", group=gViz)
+bool  showTL  = input.bool(true,  "추세선", group=gViz)
+color colTop  = input.color(color.red,   "하락(상단) 색", group=gViz)
+color colBot  = input.color(color.green, "상승(하단) 색", group=gViz)
+
+// ---------------- Pivots ----------------
+float ph = ta.pivothigh(n, n)
+float pl = ta.pivotlow(n, n)
+
+var float up1 = na
+var int   up1x = na
+var float up2 = na
+var int   up2x = na
+var float dn1 = na
+var int   dn1x = na
+var float dn2 = na
+var int   dn2x = na
+
+if not na(ph)
+    up2 := up1
+    up2x := up1x
+    up1 := ph
+    up1x := bar_index - n
+if not na(pl)
+    dn2 := dn1
+    dn2x := dn1x
+    dn1 := pl
+    dn1x := bar_index - n
+
+// ---------------- Trendlines (current) ----------------
+float slope_dn = (not na(dn1) and not na(dn2) and dn1x != dn2x) ? (dn1 - dn2) / (dn1x - dn2x) : na
+float slope_up = (not na(up1) and not na(up2) and up1x != up2x) ? (up1 - up2) / (up1x - up2x) : na
+float y_dn = not na(slope_dn) ? dn1 + slope_dn * (bar_index - dn1x) : na
+float y_up = not na(slope_up) ? up1 + slope_up * (bar_index - up1x) : na
+
+var line lnDn = na
+var line lnUp = na
+if showTL
+    if not na(y_dn)
+        if na(lnDn)
+            lnDn := line.new(dn2x, dn2, bar_index, y_dn, color=color.new(colBot, 30), width=1, style=line.style_dashed)
+        else
+            line.set_xy1(lnDn, dn2x, dn2)
+            line.set_xy2(lnDn, bar_index, y_dn)
+    if not na(y_up)
+        if na(lnUp)
+            lnUp := line.new(up2x, up2, bar_index, y_up, color=color.new(colTop, 30), width=1, style=line.style_dashed)
+        else
+            line.set_xy1(lnUp, up2x, up2)
+            line.set_xy2(lnUp, bar_index, y_up)
+
+// ---------------- Context / point-1 break ----------------
+bool upCtx = not na(slope_dn) and slope_dn > 0
+bool dnCtx = not na(slope_up) and slope_up < 0
+bool brk1_top = upCtx and ta.crossunder(close, y_dn)
+bool brk1_bot = dnCtx and ta.crossover(close, y_up)
+
+// ---------------- label helper ----------------
+mk(int x, float y, string txt, bool below, color col) =>
+    label.new(x, y, txt, style = below ? label.style_label_up : label.style_label_down, color = col, textcolor = color.white, size = size.small)
+
+// 신호 플래그 (매 봉 초기화)
+bool fireTop3 = false      // 상단 점3 (하락전환 확정)  → 매도
+bool fireBot3 = false      // 하단 점3 (상승전환 확정)  → 매수
+bool fire2Bbear = false    // 하락형 2B                 → 매도
+bool fire2Bbull = false    // 상승형 2B                 → 매수
+
+// ================= 상단: 하락전환 1-2-3 =================
+var int   topSt   = 0
+var float topHigh = na
+var float topLow  = na
+if show123
+    if topSt != 0 and not na(topHigh) and high > topHigh
+        topSt := 0
+    if brk1_top and topSt == 0
+        topSt := 1
+        topHigh := up1
+        mk(bar_index, high, "1", false, colTop)
+    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh
+        topSt := 2
+        topLow := dn1
+        mk(bar_index - n, ph, "2", false, colTop)
+    if topSt == 2 and not na(topLow) and ta.crossunder(close, topLow)
+        topSt := 0
+        mk(bar_index, high, "3", false, colTop)
+        fireTop3 := true
+
+// ================= 하단: 상승전환 1-2-3 =================
+var int   botSt   = 0
+var float botLow  = na
+var float botHigh = na
+if show123
+    if botSt != 0 and not na(botLow) and low < botLow
+        botSt := 0
+    if brk1_bot and botSt == 0
+        botSt := 1
+        botLow := dn1
+        mk(bar_index, low, "1", true, colBot)
+    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow
+        botSt := 2
+        botHigh := up1
+        mk(bar_index - n, pl, "2", true, colBot)
+    if botSt == 2 and not na(botHigh) and ta.crossover(close, botHigh)
+        botSt := 0
+        mk(bar_index, low, "3", true, colBot)
+        fireBot3 := true
+
+// ================= 2B =================
+var float b2bTop = na
+var bool  b2bTopX = false
+var float b2bBot = na
+var bool  b2bBotX = false
+if show2b
+    if not na(ph)
+        b2bTop := ph
+        b2bTopX := false
+    if not na(b2bTop)
+        if high > b2bTop
+            b2bTopX := true
+        if b2bTopX and close < b2bTop
+            mk(bar_index, high, "2B", false, colTop)
+            fire2Bbear := true
+            b2bTopX := false
+            b2bTop := na
+    if not na(pl)
+        b2bBot := pl
+        b2bBotX := false
+    if not na(b2bBot)
+        if low < b2bBot
+            b2bBotX := true
+        if b2bBotX and close > b2bBot
+            mk(bar_index, low, "2B", true, colBot)
+            fire2Bbull := true
+            b2bBotX := false
+            b2bBot := na
+
+// ---------------------------------------------------------------------
+//  전략 진입/청산
+// ---------------------------------------------------------------------
+bool bullSig = (useP3 and fireBot3) or (use2B and fire2Bbull)   // 매수 신호
+bool bearSig = (useP3 and fireTop3) or (use2B and fire2Bbear)   // 매도 신호
+
+bool inRange = not useDate or (time >= fromDate and time <= toDate)
+bool longOK  = dirMode != "숏only"
+bool shortOK = dirMode != "롱only"
+
+if inRange
+    if bullSig
+        if longOK
+            strategy.entry("Long", strategy.long)          // 롱&숏이면 숏 자동 청산 후 롱
+        if not longOK
+            strategy.close("Short")                        // 숏only: 매수신호=숏 청산
+    if bearSig
+        if shortOK
+            strategy.entry("Short", strategy.short)         // 롱&숏이면 롱 자동 청산 후 숏
+        if not shortOK
+            strategy.close("Long")                          // 롱only: 매도신호=롱 청산
+
+// 손절 / 익절
+float ep = strategy.position_avg_price
+if strategy.position_size > 0 and (useSL or useTP)
+    strategy.exit("L-exit", from_entry="Long",  stop = useSL ? ep * (1 - slPerc/100) : na, limit = useTP ? ep * (1 + tpPerc/100) : na)
+if strategy.position_size < 0 and (useSL or useTP)
+    strategy.exit("S-exit", from_entry="Short", stop = useSL ? ep * (1 + slPerc/100) : na, limit = useTP ? ep * (1 - tpPerc/100) : na)
+
+// 기간 종료 시 전체 청산
+if useDate and time > toDate
+    strategy.close_all()
