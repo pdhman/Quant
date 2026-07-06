@@ -29,6 +29,16 @@ bool   useDate = input.bool(false, "기간 제한", group=gBT)
 int    fromDate= input.time(timestamp("2016-01-01T00:00"), "시작", group=gBT)
 int    toDate  = input.time(timestamp("2027-01-01T00:00"), "종료", group=gBT)
 
+string g2bf = "2B 신뢰도 필터"
+bool  f2bVol   = input.bool(true,  "거래량 확인", group=g2bf)
+float volMult  = input.float(1.5,  "  · 거래량 배수(×SMA)", minval=0.1, step=0.1, group=g2bf)
+int   volLen   = input.int(20,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
+bool  f2bWick  = input.bool(true,  "ATR 거부 꼬리", group=g2bf)
+float wickMult = input.float(1.0,  "  · 꼬리 ATR 배수", minval=0.1, step=0.1, group=g2bf)
+bool  f2bFresh = input.bool(true,  "되돌림 N봉 이내", group=g2bf)
+int   b2bMaxBars = input.int(10,   "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
+int   atrLen   = input.int(14,     "  · ATR 기간", minval=1, group=g2bf)
+
 string gViz = "표시"
 bool  show123 = input.bool(true,  "1-2-3 라벨", group=gViz)
 bool  show2b  = input.bool(true,  "2B 라벨", group=gViz)
@@ -138,34 +148,53 @@ if show123
         mk(bar_index, low, "3", true, colBot)
         fireBot3 := true
 
-// ================= 2B =================
+// ================= 2B (신뢰도 필터: 거래량 · ATR 거부꼬리 · 되돌림 신속성) =================
+float atrVal = ta.atr(atrLen)
+float volSMA = ta.sma(nz(volume), volLen)
+
 var float b2bTop = na
 var bool  b2bTopX = false
+var int   b2bTopXBar = na
 var float b2bBot = na
 var bool  b2bBotX = false
+var int   b2bBotXBar = na
 if show2b
     if not na(ph)
         b2bTop := ph
         b2bTopX := false
+        b2bTopXBar := na
     if not na(b2bTop)
-        if high > b2bTop
+        if high > b2bTop and not b2bTopX
             b2bTopX := true
+            b2bTopXBar := bar_index
         if b2bTopX and close < b2bTop
-            mk(bar_index, high, "2B", false, colTop)
-            fire2Bbear := true
+            bool volOK   = not f2bVol   or na(volSMA) or volSMA <= 0 or nz(volume) >= volMult * volSMA
+            bool wickOK  = not f2bWick  or (high - math.max(open, close)) >= wickMult * atrVal
+            bool freshOK = not f2bFresh or (not na(b2bTopXBar) and bar_index - b2bTopXBar <= b2bMaxBars)
+            if volOK and wickOK and freshOK
+                mk(bar_index, high, "2B", false, colTop)
+                fire2Bbear := true
             b2bTopX := false
             b2bTop := na
+            b2bTopXBar := na
     if not na(pl)
         b2bBot := pl
         b2bBotX := false
+        b2bBotXBar := na
     if not na(b2bBot)
-        if low < b2bBot
+        if low < b2bBot and not b2bBotX
             b2bBotX := true
+            b2bBotXBar := bar_index
         if b2bBotX and close > b2bBot
-            mk(bar_index, low, "2B", true, colBot)
-            fire2Bbull := true
+            bool volOK2   = not f2bVol   or na(volSMA) or volSMA <= 0 or nz(volume) >= volMult * volSMA
+            bool wickOK2  = not f2bWick  or (math.min(open, close) - low) >= wickMult * atrVal
+            bool freshOK2 = not f2bFresh or (not na(b2bBotXBar) and bar_index - b2bBotXBar <= b2bMaxBars)
+            if volOK2 and wickOK2 and freshOK2
+                mk(bar_index, low, "2B", true, colBot)
+                fire2Bbull := true
             b2bBotX := false
             b2bBot := na
+            b2bBotXBar := na
 
 // ---------------------------------------------------------------------
 //  전략 진입/청산

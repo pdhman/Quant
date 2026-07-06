@@ -24,6 +24,16 @@ int setupExpireBars = input.int(60, "셋업 유효기간(봉)", minval=5, group=
 string g2b = "2B 규칙"
 bool  show2b = input.bool(true, "2B 표시", group=g2b)
 
+string g2bf = "2B 신뢰도 필터"
+bool  f2bVol   = input.bool(true,  "거래량 확인", group=g2bf)
+float volMult  = input.float(1.5,  "  · 거래량 배수(×SMA)", minval=0.1, step=0.1, group=g2bf)
+int   volLen   = input.int(20,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
+bool  f2bWick  = input.bool(true,  "ATR 거부 꼬리", group=g2bf)
+float wickMult = input.float(1.0,  "  · 꼬리 ATR 배수", minval=0.1, step=0.1, group=g2bf)
+bool  f2bFresh = input.bool(true,  "되돌림 N봉 이내", group=g2bf)
+int   b2bMaxBars = input.int(10,   "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
+int   atrLen   = input.int(14,     "  · ATR 기간", minval=1, group=g2bf)
+
 int labelTransp = input.int(50, "라벨 투명도", minval=0, maxval=100, group=g123)
 
 // ---------------- Pivots ----------------
@@ -219,43 +229,62 @@ if show123
         botHigh := na
         botStartBar := na
 
-// ================= 2B =================
+// ================= 2B (신뢰도 필터: 거래량 · ATR 거부꼬리 · 되돌림 신속성) =================
+float atrVal = ta.atr(atrLen)
+float volSMA = ta.sma(nz(volume), volLen)
+
 var float b2bTop = na
 var bool  b2bTopX = false
+var int   b2bTopXBar = na
 
 var float b2bBot = na
 var bool  b2bBotX = false
+var int   b2bBotXBar = na
 
 if show2b
     // 하락형 2B: 직전 고점 경신 후 그 고점 아래로 마감
     if not na(ph)
         b2bTop := ph
         b2bTopX := false
+        b2bTopXBar := na
 
     if not na(b2bTop)
-        if high > b2bTop
+        if high > b2bTop and not b2bTopX
             b2bTopX := true
+            b2bTopXBar := bar_index
 
         if b2bTopX and close < b2bTop
-            mk(bar_index, high, "2B", false, colTop)
-            fire2Bbear := true
+            bool volOK   = not f2bVol   or na(volSMA) or volSMA <= 0 or nz(volume) >= volMult * volSMA
+            bool wickOK  = not f2bWick  or (high - math.max(open, close)) >= wickMult * atrVal
+            bool freshOK = not f2bFresh or (not na(b2bTopXBar) and bar_index - b2bTopXBar <= b2bMaxBars)
+            if volOK and wickOK and freshOK
+                mk(bar_index, high, "2B", false, colTop)
+                fire2Bbear := true
             b2bTopX := false
             b2bTop := na
+            b2bTopXBar := na
 
     // 상승형 2B: 직전 저점 경신 후 그 저점 위로 마감
     if not na(pl)
         b2bBot := pl
         b2bBotX := false
+        b2bBotXBar := na
 
     if not na(b2bBot)
-        if low < b2bBot
+        if low < b2bBot and not b2bBotX
             b2bBotX := true
+            b2bBotXBar := bar_index
 
         if b2bBotX and close > b2bBot
-            mk(bar_index, low, "2B", true, colBot)
-            fire2Bbull := true
+            bool volOK2   = not f2bVol   or na(volSMA) or volSMA <= 0 or nz(volume) >= volMult * volSMA
+            bool wickOK2  = not f2bWick  or (math.min(open, close) - low) >= wickMult * atrVal
+            bool freshOK2 = not f2bFresh or (not na(b2bBotXBar) and bar_index - b2bBotXBar <= b2bMaxBars)
+            if volOK2 and wickOK2 and freshOK2
+                mk(bar_index, low, "2B", true, colBot)
+                fire2Bbull := true
             b2bBotX := false
             b2bBot := na
+            b2bBotXBar := na
 
 // ---------------- Alerts ----------------
 bool firePoint1 = fireTop1 or fireBot1
