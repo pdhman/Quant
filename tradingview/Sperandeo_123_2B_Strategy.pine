@@ -41,10 +41,12 @@ int   atrLen   = input.int(14,     "  · ATR 기간", minval=1, group=g2bf)
 
 string gViz = "표시"
 bool  show123 = input.bool(true,  "1-2-3 라벨", group=gViz)
+int   setupExpireBars = input.int(60, "셋업 유효기간(봉)", minval=5, group=gViz)
 bool  show2b  = input.bool(true,  "2B 라벨", group=gViz)
 bool  showTL  = input.bool(true,  "추세선", group=gViz)
 color colTop  = input.color(color.red,   "하락(상단) 색", group=gViz)
 color colBot  = input.color(color.green, "상승(하단) 색", group=gViz)
+int   labelTransp = input.int(50, "라벨 투명도", minval=0, maxval=100, group=gViz)
 
 // ---------------- Pivots ----------------
 float ph = ta.pivothigh(n, n)
@@ -95,12 +97,16 @@ if showTL
 // ---------------- Context / point-1 break ----------------
 bool upCtx = not na(slope_dn) and slope_dn > 0
 bool dnCtx = not na(slope_up) and slope_up < 0
-bool brk1_top = upCtx and ta.crossunder(close, y_dn)
-bool brk1_bot = dnCtx and ta.crossover(close, y_up)
+
+// ta.crossunder/crossover는 매 봉 먼저 계산 (조건문 단락평가로 인한 이력 오류 방지)
+bool crossUnderTrendSupport   = ta.crossunder(close, y_dn)
+bool crossOverTrendResistance = ta.crossover(close, y_up)
+bool brk1_top = upCtx and crossUnderTrendSupport
+bool brk1_bot = dnCtx and crossOverTrendResistance
 
 // ---------------- label helper ----------------
 mk(int x, float y, string txt, bool below, color col) =>
-    label.new(x, y, txt, style = below ? label.style_label_up : label.style_label_down, color = col, textcolor = color.white, size = size.small)
+    label.new(x, y, txt, style = below ? label.style_label_up : label.style_label_down, color = color.new(col, labelTransp), textcolor = color.white, size = size.small)
 
 // 신호 플래그 (매 봉 초기화)
 bool fireTop3 = false      // 상단 점3 (하락전환 확정)  → 매도
@@ -112,41 +118,85 @@ bool fire2Bbull = false    // 상승형 2B                 → 매수
 var int   topSt   = 0
 var float topHigh = na
 var float topLow  = na
+var int   topStartBar = na
+
+bool topLowBreak = ta.crossunder(close, topLow)
+
 if show123
+    // 셋업 유효기간 만료
+    if topSt != 0 and not na(topStartBar) and bar_index - topStartBar > setupExpireBars
+        topSt := 0
+        topHigh := na
+        topLow := na
+        topStartBar := na
+    // 무효화: 직전 고점 위로 신고점
     if topSt != 0 and not na(topHigh) and high > topHigh
         topSt := 0
+        topHigh := na
+        topLow := na
+        topStartBar := na
+    // 점 1
     if brk1_top and topSt == 0
         topSt := 1
         topHigh := up1
+        topLow := na
+        topStartBar := bar_index
         mk(bar_index, high, "1", false, colTop)
+    // 점 2
     if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh
         topSt := 2
         topLow := dn1
         mk(bar_index - n, ph, "2", false, colTop)
-    if topSt == 2 and not na(topLow) and ta.crossunder(close, topLow)
+    // 점 3
+    if topSt == 2 and not na(topLow) and topLowBreak
         topSt := 0
         mk(bar_index, high, "3", false, colTop)
         fireTop3 := true
+        topHigh := na
+        topLow := na
+        topStartBar := na
 
 // ================= 하단: 상승전환 1-2-3 =================
 var int   botSt   = 0
 var float botLow  = na
 var float botHigh = na
+var int   botStartBar = na
+
+bool botHighBreak = ta.crossover(close, botHigh)
+
 if show123
+    // 셋업 유효기간 만료
+    if botSt != 0 and not na(botStartBar) and bar_index - botStartBar > setupExpireBars
+        botSt := 0
+        botLow := na
+        botHigh := na
+        botStartBar := na
+    // 무효화: 직전 저점 아래로 신저점
     if botSt != 0 and not na(botLow) and low < botLow
         botSt := 0
+        botLow := na
+        botHigh := na
+        botStartBar := na
+    // 점 1
     if brk1_bot and botSt == 0
         botSt := 1
         botLow := dn1
+        botHigh := na
+        botStartBar := bar_index
         mk(bar_index, low, "1", true, colBot)
+    // 점 2
     if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow
         botSt := 2
         botHigh := up1
         mk(bar_index - n, pl, "2", true, colBot)
-    if botSt == 2 and not na(botHigh) and ta.crossover(close, botHigh)
+    // 점 3
+    if botSt == 2 and not na(botHigh) and botHighBreak
         botSt := 0
         mk(bar_index, low, "3", true, colBot)
         fireBot3 := true
+        botLow := na
+        botHigh := na
+        botStartBar := na
 
 // ================= 2B (신뢰도 필터: 거래량 · ATR 거부꼬리 · 되돌림 신속성) =================
 float atrVal = ta.atr(atrLen)
