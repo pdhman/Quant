@@ -166,8 +166,8 @@ if show123
         mk(bar_index, high, "1", false, colTop)
         fireTop1 := true
 
-    // 점 2: 직전 고점 재시험 실패
-    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh
+    // 점 2: 직전 고점 재시험 실패 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
+    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh and (bar_index - n) > topStartBar
         topSt := 2
         topLow := dn1
         mk(bar_index - n, ph, "2", false, colTop)
@@ -214,8 +214,8 @@ if show123
         mk(bar_index, low, "1", true, colBot)
         fireBot1 := true
 
-    // 점 2: 직전 저점 재시험 실패
-    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow
+    // 점 2: 직전 저점 재시험 실패 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
+    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow and (bar_index - n) > botStartBar
         botSt := 2
         botHigh := up1
         mk(bar_index - n, pl, "2", true, colBot)
