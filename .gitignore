@@ -9,3 +9,6 @@ config.yaml
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# 백테스트 웹툴 캐시
+webapp/backend/cache.db
