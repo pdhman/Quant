@@ -47,15 +47,24 @@ int lookback = int(math.round(lenMin + (lenMax - lenMin) * nz(volRank, 50) / 100
 float prevHigh = ta.highest(high, math.max(1, lookback))
 float prevLow  = ta.lowest(low,  math.max(1, lookback))
 
-plot(prevHigh, "채널 상단 (prev_high)", color=color.new(color.green, 20), linewidth=2)
-plot(prevLow,  "채널 하단 (prev_low)",  color=color.new(color.red, 20),   linewidth=2)
-plot((prevHigh + prevLow) / 2, "채널 중심", color=color.new(color.gray, 60), style=plot.style_linebr)
+// 세련된 팔레트 (다크 테마 기준): 상단=레드, 하단=틸그린, 중심=뉴트럴 그레이
+color COL_UP     = #f23645      // 채널 상단 (저항)
+color COL_DN     = #089981      // 채널 하단 (지지)
+color COL_MID    = #787b86      // 중심선
+color COL_BUY_L  = #26c6da      // 매수 Limit (시안)
+color COL_SELL_L = #e040fb      // 매도 Limit (마젠타)
+color COL_BUY_S  = #00e676      // 매수 Stop (라임그린)
+color COL_SELL_S = #ff5252      // 매도 Stop (코럴레드)
+
+plot(prevHigh, "채널 상단 (prev_high)", color=color.new(COL_UP, 25), linewidth=2)
+plot(prevLow,  "채널 하단 (prev_low)",  color=color.new(COL_DN, 25), linewidth=2)
+plot((prevHigh + prevLow) / 2, "채널 중심", color=color.new(COL_MID, 55), style=plot.style_linebr)
 
 // ---------------- ③ 국면: 돌파(VOLCANO) vs 회귀(STARS) ----------------
 bool breakoutMode = volRank > volThr        // 변동성 강함 → 돌파 매매
 bool meanrevMode  = not breakoutMode        // 변동성 약함 → 되돌림 매매
 
-bgcolor(showBG ? (breakoutMode ? color.new(color.orange, 92) : color.new(color.blue, 94)) : na, title="국면 배경(주황=돌파, 파랑=회귀)")
+bgcolor(showBG ? (breakoutMode ? color.new(#ff9800, 93) : color.new(#2962ff, 95)) : na, title="국면 배경(주황=돌파, 파랑=회귀)")
 
 // ---------------- 방향 필터 (원본 유지: 저가/고가 수익률 표준편차 감소) ----------------
 float lowRet  = (low - low[1]) / low[1]
@@ -76,19 +85,28 @@ float sellLimitLvl = meanrevMode  and shortSide ? prevHigh + buffer : na   // �
 float buyStopLvl   = breakoutMode and longSide  ? prevHigh : na            // 원본 bVOLCANO
 float sellStopLvl  = breakoutMode and shortSide ? prevLow  : na            // 원본 sVOLCANO
 
-plot(buyLimitLvl,  "매수 Limit (회귀)", color=color.new(color.teal, 0),   style=plot.style_circles, linewidth=2)
-plot(sellLimitLvl, "매도 Limit (회귀)", color=color.new(color.purple, 0), style=plot.style_circles, linewidth=2)
-plot(buyStopLvl,   "매수 Stop (돌파)",  color=color.new(color.lime, 0),   style=plot.style_cross,   linewidth=2)
-plot(sellStopLvl,  "매도 Stop (돌파)",  color=color.new(color.maroon, 0), style=plot.style_cross,   linewidth=2)
+plot(buyLimitLvl,  "매수 Limit (회귀)", color=COL_BUY_L,  style=plot.style_circles, linewidth=2)
+plot(sellLimitLvl, "매도 Limit (회귀)", color=COL_SELL_L, style=plot.style_circles, linewidth=2)
+plot(buyStopLvl,   "매수 Stop (돌파)",  color=COL_BUY_S,  style=plot.style_cross,   linewidth=2)
+plot(sellStopLvl,  "매도 Stop (돌파)",  color=COL_SELL_S, style=plot.style_cross,   linewidth=2)
 
-// ---------------- 상태 테이블 ----------------
-var table tb = table.new(position.top_right, 2, 5, border_width=1)
+// ---------------- 상태 테이블 (다크 배경 + 흰 글씨) ----------------
+color TB_BG_HDR = color.new(#131722, 10)   // 라벨 열 배경 (짙은 네이비)
+color TB_BG_VAL = color.new(#1e222d, 10)   // 값 열 배경
+color TB_TXT    = color.white
+
+var table tb = table.new(position.top_right, 2, 5, border_width=1, border_color=color.new(#434651, 40), frame_color=color.new(#434651, 40), frame_width=1)
 if showTable and barstate.islast
-    table.cell(tb, 0, 0, "변동성 백분위", text_size=size.small), table.cell(tb, 1, 0, str.tostring(volRank, "#.0") + " %", text_size=size.small)
-    table.cell(tb, 0, 1, "적응 룩백",     text_size=size.small), table.cell(tb, 1, 1, str.tostring(lookback) + " 봉", text_size=size.small)
-    table.cell(tb, 0, 2, "국면",          text_size=size.small), table.cell(tb, 1, 2, breakoutMode ? "돌파 (VOLCANO)" : "회귀 (STARS)", text_size=size.small, text_color=breakoutMode ? color.orange : color.blue)
-    table.cell(tb, 0, 3, "방향 후보",     text_size=size.small), table.cell(tb, 1, 3, (longSide ? "롱 " : "") + (shortSide ? "숏" : (longSide ? "" : "-")), text_size=size.small)
-    table.cell(tb, 0, 4, "진입 레벨",     text_size=size.small), table.cell(tb, 1, 4, not na(buyLimitLvl) ? "매수L " + str.tostring(buyLimitLvl, format.mintick) : not na(buyStopLvl) ? "매수S " + str.tostring(buyStopLvl, format.mintick) : not na(sellLimitLvl) ? "매도L " + str.tostring(sellLimitLvl, format.mintick) : not na(sellStopLvl) ? "매도S " + str.tostring(sellStopLvl, format.mintick) : "-", text_size=size.small)
+    table.cell(tb, 0, 0, "변동성 백분위", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_HDR)
+    table.cell(tb, 1, 0, str.tostring(volRank, "#.0") + " %", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_VAL)
+    table.cell(tb, 0, 1, "적응 룩백", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_HDR)
+    table.cell(tb, 1, 1, str.tostring(lookback) + " 봉", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_VAL)
+    table.cell(tb, 0, 2, "국면", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_HDR)
+    table.cell(tb, 1, 2, breakoutMode ? "돌파 (VOLCANO)" : "회귀 (STARS)", text_size=size.small, text_color=breakoutMode ? #ffb74d : #82b1ff, bgcolor=TB_BG_VAL)
+    table.cell(tb, 0, 3, "방향 후보", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_HDR)
+    table.cell(tb, 1, 3, (longSide ? "롱 " : "") + (shortSide ? "숏" : (longSide ? "" : "-")), text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_VAL)
+    table.cell(tb, 0, 4, "진입 레벨", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_HDR)
+    table.cell(tb, 1, 4, not na(buyLimitLvl) ? "매수L " + str.tostring(buyLimitLvl, format.mintick) : not na(buyStopLvl) ? "매수S " + str.tostring(buyStopLvl, format.mintick) : not na(sellLimitLvl) ? "매도L " + str.tostring(sellLimitLvl, format.mintick) : not na(sellStopLvl) ? "매도S " + str.tostring(sellStopLvl, format.mintick) : "-", text_size=size.small, text_color=TB_TXT, bgcolor=TB_BG_VAL)
 
 // ---------------- Alerts ----------------
 alertcondition(not na(buyLimitLvl)  and na(buyLimitLvl[1]),  "매수 Limit 셋업(회귀)", "VOLCANO-E: 회귀 매수 limit 셋업 발생")
