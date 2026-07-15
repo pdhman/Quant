@@ -19,7 +19,7 @@ float commission_in_ticks = input.float(0.5, title = "Commission(tick)")
 int   spread_in_ticks     = input.int(1,     title = "Spread(tick)")
 
 bool showSignals = input.bool(true, "진입 신호 표시", group = "표시")
-bool showLevels  = input.bool(true, "진입 레벨 표시", group = "표시")
+bool showLevels  = input.bool(false, "진입 레벨 표시", group = "표시")
 bool showTable   = input.bool(true, "상태 테이블",   group = "표시")
 
 // ---------------- Friday close window (원본 로직 유지) ----------------
@@ -137,15 +137,22 @@ bool bVOLCANO = long_stop_cond   and active   // 롱 Stop   : prev_high
 bool sSTARS   = short_limit_cond and active   // 숏 Limit  : prev_high + buffer
 bool sVOLCANO = short_stop_cond  and active   // 숏 Stop   : prev_low
 
+// 중복 억제: 원본 전략은 '무포지션일 때만' 진입 → 인디케이터엔 포지션이 없어 매 봉 찍힘.
+// 같은 셋업이 연속되는 구간에는 '처음 전환되는 봉'에만 마커 표시.
+bool onlyNew = input.bool(true, "새 셋업만 표시(중복 억제)", group = "표시")
+int  sigCode = bSTARS ? 1 : bVOLCANO ? 2 : sSTARS ? 3 : sVOLCANO ? 4 : 0   // 원본 우선순위(롱 먼저)
+bool isNew   = sigCode != 0 and sigCode != sigCode[1]
+bool showMk  = showSignals and (not onlyNew or isNew)
+
 // ---------------- 채널 표시 (원본 유지) ----------------
 plot(prev_high, "prev_high", color = color.new(color.green, 0), linewidth = 2)
 plot(prev_low,  "prev_low",  color = color.new(color.red, 0),   linewidth = 2)
 
-// ---------------- 진입 신호/레벨 표시 ----------------
-plotshape(showSignals and bSTARS,   "bSTARS (롱 Limit)",  style = shape.circle,       location = location.belowbar, color = color.new(#26c6da, 0), text = "STARS",   textcolor = color.white, size = size.tiny)
-plotshape(showSignals and bVOLCANO, "bVOLCANO (롱 Stop)", style = shape.triangleup,   location = location.belowbar, color = color.new(#00e676, 0), text = "VOLCANO", textcolor = color.white, size = size.tiny)
-plotshape(showSignals and sSTARS,   "sSTARS (숏 Limit)",  style = shape.circle,       location = location.abovebar, color = color.new(#e040fb, 0), text = "STARS",   textcolor = color.white, size = size.tiny)
-plotshape(showSignals and sVOLCANO, "sVOLCANO (숏 Stop)", style = shape.triangledown, location = location.abovebar, color = color.new(#ff5252, 0), text = "VOLCANO", textcolor = color.white, size = size.tiny)
+// ---------------- 진입 신호 표시 (전환 시) ----------------
+plotshape(showMk and bSTARS,   "bSTARS (롱 Limit)",  style = shape.circle,       location = location.belowbar, color = color.new(#26c6da, 0), text = "S", textcolor = color.white, size = size.tiny)
+plotshape(showMk and bVOLCANO, "bVOLCANO (롱 Stop)", style = shape.triangleup,   location = location.belowbar, color = color.new(#00e676, 0), text = "V", textcolor = color.white, size = size.tiny)
+plotshape(showMk and sSTARS,   "sSTARS (숏 Limit)",  style = shape.circle,       location = location.abovebar, color = color.new(#e040fb, 0), text = "S", textcolor = color.white, size = size.tiny)
+plotshape(showMk and sVOLCANO, "sVOLCANO (숏 Stop)", style = shape.triangledown, location = location.abovebar, color = color.new(#ff5252, 0), text = "V", textcolor = color.white, size = size.tiny)
 
 plot(showLevels and bSTARS   ? prev_low - buffer  : na, "bSTARS 레벨",   color = color.new(#26c6da, 0), style = plot.style_circles, linewidth = 2)
 plot(showLevels and bVOLCANO ? prev_high          : na, "bVOLCANO 레벨", color = color.new(#00e676, 0), style = plot.style_cross,   linewidth = 2)

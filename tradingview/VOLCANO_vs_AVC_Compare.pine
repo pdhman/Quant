@@ -63,12 +63,17 @@ bool o_bVOLCANO = (vol_val_low  - vol_val_low[1]  < 0) and     o_strong and o_ac
 bool o_sSTARS   = (vol_val_high - vol_val_high[1] < 0) and not o_strong and o_active   // 숏 Limit
 bool o_sVOLCANO = (vol_val_high - vol_val_high[1] < 0) and     o_strong and o_active   // 숏 Stop
 
+// 중복 억제 (원본은 '무포지션일 때만' 진입 → 전환 봉에만 표시)
+bool onlyNew = input.bool(true, "새 셋업만 표시(중복 억제)", group = "비교")
+int  oCode = o_bSTARS ? 1 : o_bVOLCANO ? 2 : o_sSTARS ? 3 : o_sVOLCANO ? 4 : 0
+bool oNew  = not onlyNew or (oCode != 0 and oCode != oCode[1])
+
 // 원본 채널 (굵은 실선)
 plot(showOrig ? o_high : na, "VOLCANO 상단", color = color.new(#f23645, 0), linewidth = 3)
 plot(showOrig ? o_low  : na, "VOLCANO 하단", color = color.new(#089981, 0), linewidth = 3)
 // 원본 신호 (사각형 = 원본)
-plotshape(showOrig and (o_bSTARS or o_bVOLCANO), "VOLCANO 롱", style = shape.square, location = location.belowbar, color = o_bVOLCANO ? #00e676 : #26c6da, text = "V", textcolor = color.white, size = size.tiny)
-plotshape(showOrig and (o_sSTARS or o_sVOLCANO), "VOLCANO 숏", style = shape.square, location = location.abovebar, color = o_sVOLCANO ? #ff5252 : #e040fb, text = "V", textcolor = color.white, size = size.tiny)
+plotshape(showOrig and oNew and (o_bSTARS or o_bVOLCANO), "VOLCANO 롱", style = shape.square, location = location.belowbar, color = o_bVOLCANO ? #00e676 : #26c6da, text = "V", textcolor = color.white, size = size.tiny)
+plotshape(showOrig and oNew and (o_sSTARS or o_sVOLCANO), "VOLCANO 숏", style = shape.square, location = location.abovebar, color = o_sVOLCANO ? #ff5252 : #e040fb, text = "V", textcolor = color.white, size = size.tiny)
 
 // =====================================================================
 //  B) 재구성 AVC  (최신 로직: 거래량 확인 돌파 + 되돌림 확인 STARS, 일 단위 스케일)
@@ -128,9 +133,11 @@ bgcolor(showBG and showAVC ? (aBreak ? color.new(#ff9800, 95) : color.new(#2962f
 // AVC 채널 (가는 선, 다른 색)
 plot(showAVC ? a_high : na, "AVC 상단", color = color.new(#ff9800, 10), linewidth = 1)
 plot(showAVC ? a_low  : na, "AVC 하단", color = color.new(#26c6da, 10), linewidth = 1)
-// AVC 신호 (삼각형 = 재구성)
-plotshape(showAVC and (aLongBrk or aLongSta),  "AVC 롱", style = shape.triangleup,   location = location.belowbar, color = aLongBrk ? #00e676 : #26c6da, text = "A", textcolor = color.white, size = size.tiny)
-plotshape(showAVC and (aShortBrk or aShortSta),"AVC 숏", style = shape.triangledown, location = location.abovebar, color = aShortBrk ? #ff5252 : #e040fb, text = "A", textcolor = color.white, size = size.tiny)
+// AVC 신호 (삼각형 = 재구성) — 전환 봉에만
+int  aCode = aLongBrk ? 1 : aLongSta ? 2 : aShortBrk ? 3 : aShortSta ? 4 : 0
+bool aNew  = not onlyNew or (aCode != 0 and aCode != aCode[1])
+plotshape(showAVC and aNew and (aLongBrk or aLongSta),  "AVC 롱", style = shape.triangleup,   location = location.belowbar, color = aLongBrk ? #00e676 : #26c6da, text = "A", textcolor = color.white, size = size.tiny)
+plotshape(showAVC and aNew and (aShortBrk or aShortSta),"AVC 숏", style = shape.triangledown, location = location.abovebar, color = aShortBrk ? #ff5252 : #e040fb, text = "A", textcolor = color.white, size = size.tiny)
 
 // =====================================================================
 //  비교 테이블
