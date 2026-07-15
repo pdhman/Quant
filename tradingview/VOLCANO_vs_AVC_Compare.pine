@@ -1,0 +1,165 @@
+//@version=6
+// =====================================================================
+//  VOLCANO(원본) vs Adaptive Volatility Channel(재구성) — 비교용 인디케이터
+// ---------------------------------------------------------------------
+//  두 시스템을 한 화면에 겹쳐 비교:
+//   · 원본 VOLCANO   : 굵은 실선 채널(빨강/초록) + 사각형 마커 (© tlswn128 로직)
+//   · 재구성 AVC      : 가는 채널(주황/시안) + 삼각형 마커 + 국면 배경
+//  우측 상단 테이블에 채널·룩백·모드·현재 신호를 나란히 표시.
+//  (실계좌 웹훅/사설 라이브러리는 포함하지 않음 — 신호·레벨 시각화 전용)
+// =====================================================================
+indicator("VOLCANO vs AVC — Compare", overlay = true, max_bars_back = 1000, max_labels_count = 500)
+
+bool showOrig  = input.bool(true, "원본 VOLCANO 표시", group = "비교")
+bool showAVC   = input.bool(true, "재구성 AVC 표시",   group = "비교")
+bool showBG    = input.bool(true, "AVC 국면 배경",     group = "비교")
+bool showTable = input.bool(true, "비교 테이블",        group = "비교")
+
+// =====================================================================
+//  A) 원본 VOLCANO  (핵심 계산·진입조건 그대로, 청산 계산은 제외)
+// =====================================================================
+string gO = "원본 VOLCANO"
+float commission_in_ticks = input.float(0.5, "Commission(tick)", group = gO)
+int   spread_in_ticks     = input.int(1,     "Spread(tick)",     group = gO)
+int   input_hour1  = input.int(14, "Fri 마감시(시)", group = gO)
+int   input_hour2  = input.int(16, "Fri 재개시(시)", group = gO)
+int   input_minute = input.int(35, "Fri 마감(분)",   group = gO)
+
+bool o_isFri = dayofweek == dayofweek.friday
+bool o_closing = o_isFri and ((hour(time) >= input_hour1 and minute(time) >= input_minute) or hour(time) > input_hour1) and hour(time) < input_hour2
+
+int   bars_in_one_week = 240
+float virtual_margin = (ta.highest(bars_in_one_week) - ta.lowest(bars_in_one_week)) * syminfo.pointvalue
+float candle_profit_w_cost = math.max((ta.tr(true) / syminfo.mintick - 2 * (commission_in_ticks + spread_in_ticks)), 1) * syminfo.mintick * syminfo.pointvalue
+float ahn_tr_w_cost = (math.log(candle_profit_w_cost / virtual_margin) + 9) * 10
+int   lkbk_per = nz(math.floor(math.max(ahn_tr_w_cost, 1)))
+
+float o_high = ta.highest(math.max(1, lkbk_per))
+float o_low  = ta.lowest(math.max(1, lkbk_per))
+
+int n_to_prev_high = - ta.highestbars(math.max(1, lkbk_per)) + 1
+int n_to_prev_low  = - ta.lowestbars(math.max(1, lkbk_per)) + 1
+int min_per = math.max(n_to_prev_high, n_to_prev_low)
+
+float alpha_ma = 2 / (min_per + 1)
+float ma_ahn_tr_w_cost = 0.0
+ma_ahn_tr_w_cost := na(ma_ahn_tr_w_cost[1]) ? ahn_tr_w_cost : alpha_ma * ahn_tr_w_cost + (1 - alpha_ma) * nz(ma_ahn_tr_w_cost[1])
+
+float vol_val_high = ta.stdev((high - high[1]) / high[1], math.max(2, min_per), false)
+float vol_val_low  = ta.stdev((low  - low[1])  / low[1],  math.max(2, min_per), false)
+
+float alpha_atr = 1.0 / min_per
+float o_buffer = 0.0
+float _atr_init = ta.sma(ta.tr(true), math.max(2, min_per))
+o_buffer := na(o_buffer[1]) ? _atr_init : alpha_atr * ta.tr(true) + (1 - alpha_atr) * nz(o_buffer[1])
+
+float scaled_cp_w_cost = math.log(candle_profit_w_cost / syminfo.mintick / syminfo.pointvalue) * math.exp(2)
+float directional_momentum = (scaled_cp_w_cost - 25) * 2
+
+bool o_strong = ahn_tr_w_cost + directional_momentum > ma_ahn_tr_w_cost[1]
+bool o_active = not o_closing
+bool o_bSTARS   = (vol_val_low  - vol_val_low[1]  < 0) and not o_strong and o_active   // 롱 Limit
+bool o_bVOLCANO = (vol_val_low  - vol_val_low[1]  < 0) and     o_strong and o_active   // 롱 Stop
+bool o_sSTARS   = (vol_val_high - vol_val_high[1] < 0) and not o_strong and o_active   // 숏 Limit
+bool o_sVOLCANO = (vol_val_high - vol_val_high[1] < 0) and     o_strong and o_active   // 숏 Stop
+
+// 원본 채널 (굵은 실선)
+plot(showOrig ? o_high : na, "VOLCANO 상단", color = color.new(#f23645, 0), linewidth = 3)
+plot(showOrig ? o_low  : na, "VOLCANO 하단", color = color.new(#089981, 0), linewidth = 3)
+// 원본 신호 (사각형 = 원본)
+plotshape(showOrig and (o_bSTARS or o_bVOLCANO), "VOLCANO 롱", style = shape.square, location = location.belowbar, color = o_bVOLCANO ? #00e676 : #26c6da, text = "V", textcolor = color.white, size = size.tiny)
+plotshape(showOrig and (o_sSTARS or o_sVOLCANO), "VOLCANO 숏", style = shape.square, location = location.abovebar, color = o_sVOLCANO ? #ff5252 : #e040fb, text = "V", textcolor = color.white, size = size.tiny)
+
+// =====================================================================
+//  B) 재구성 AVC  (최신 로직: 거래량 확인 돌파 + 되돌림 확인 STARS, 일 단위 스케일)
+// =====================================================================
+string gA = "재구성 AVC"
+int   barsPerDay  = input.int(13, "1일 봉수 (30분13/60분7)", minval = 1, group = gA)
+float atrFastDays = input.float(1.0, "ATR 단기(일)",       minval = 0.2, step = 0.5, group = gA)
+float atrSlowDays = input.float(5.0, "ATR 장기(일=1주)",   minval = 1.0, step = 0.5, group = gA)
+float rankDays    = input.float(10.0,"백분위 기간(일)",     minval = 1.0, step = 1.0, group = gA)
+float lookMinDays = input.float(2.0, "룩백 최소(일)",       minval = 0.5, step = 0.5, group = gA)
+float lookMaxDays = input.float(5.0, "룩백 최대(일=1주)",   minval = 1.0, step = 0.5, group = gA)
+float volThr      = input.float(60,  "돌파 임계 백분위(%)", minval = 0, maxval = 100, step = 5, group = gA)
+bool  useVol      = input.bool(true, "돌파 거래량 필터",     group = gA)
+float volMult     = input.float(1.5, "거래량 배수(×평균)",   minval = 0.1, step = 0.1, group = gA)
+float volDays     = input.float(5.0, "거래량 평균(일)",      minval = 0.5, step = 0.5, group = gA)
+float bufMult     = input.float(0.5, "STARS 버퍼(ATR배수)",  minval = 0.0, step = 0.25, group = gA)
+float atrDays     = input.float(1.0, "거래 ATR(일)",         minval = 0.2, step = 0.5, group = gA)
+
+int aAtrFast = math.max(2,  int(math.round(atrFastDays * barsPerDay)))
+int aAtrSlow = math.max(3,  int(math.round(atrSlowDays * barsPerDay)))
+int aRankLen = math.max(20, int(math.round(rankDays    * barsPerDay)))
+int aLenMin  = math.max(2,  int(math.round(lookMinDays * barsPerDay)))
+int aLenMax  = math.max(aLenMin + 1, int(math.round(lookMaxDays * barsPerDay)))
+int aVolLen  = math.max(2,  int(math.round(volDays     * barsPerDay)))
+int aTradeAtr= math.max(2,  int(math.round(atrDays     * barsPerDay)))
+
+float aRatio = ta.atr(aAtrFast) / ta.atr(aAtrSlow)
+float aRank  = ta.percentrank(aRatio, aRankLen)
+int   aLook  = int(math.round(aLenMin + (aLenMax - aLenMin) * nz(aRank, 50) / 100))
+float a_high = ta.highest(high, math.max(1, aLook))
+float a_low  = ta.lowest(low,  math.max(1, aLook))
+bool  aBreak = aRank > volThr
+bool  aMean  = not aBreak
+
+float aSdLow  = ta.stdev((low  - low[1])  / low[1],  math.max(2, aLook), false)
+float aSdHigh = ta.stdev((high - high[1]) / high[1], math.max(2, aLook), false)
+bool  aLongSide  = aSdLow  - aSdLow[1]  < 0
+bool  aShortSide = aSdHigh - aSdHigh[1] < 0
+
+float aBuf     = bufMult * ta.atr(aTradeAtr)
+float aRefHigh = a_high[1]
+float aRefLow  = a_low[1]
+float aVolMA   = ta.sma(volume, aVolLen)
+bool  aVolOK   = not useVol or na(aVolMA) or aVolMA <= 0 or volume > volMult * aVolMA
+
+bool aBrkUp = close > aRefHigh and aVolOK
+bool aBrkDn = close < aRefLow  and aVolOK
+bool aStaUp = low  <= aRefLow  - aBuf and close > aRefLow  - aBuf
+bool aStaDn = high >= aRefHigh + aBuf and close < aRefHigh + aBuf
+
+bool aLongBrk  = aBreak and aLongSide  and aBrkUp
+bool aLongSta  = aMean  and aLongSide  and aStaUp
+bool aShortBrk = aBreak and aShortSide and aBrkDn
+bool aShortSta = aMean  and aShortSide and aStaDn
+
+bgcolor(showBG and showAVC ? (aBreak ? color.new(#ff9800, 95) : color.new(#2962ff, 96)) : na, title = "AVC 국면 배경")
+// AVC 채널 (가는 선, 다른 색)
+plot(showAVC ? a_high : na, "AVC 상단", color = color.new(#ff9800, 10), linewidth = 1)
+plot(showAVC ? a_low  : na, "AVC 하단", color = color.new(#26c6da, 10), linewidth = 1)
+// AVC 신호 (삼각형 = 재구성)
+plotshape(showAVC and (aLongBrk or aLongSta),  "AVC 롱", style = shape.triangleup,   location = location.belowbar, color = aLongBrk ? #00e676 : #26c6da, text = "A", textcolor = color.white, size = size.tiny)
+plotshape(showAVC and (aShortBrk or aShortSta),"AVC 숏", style = shape.triangledown, location = location.abovebar, color = aShortBrk ? #ff5252 : #e040fb, text = "A", textcolor = color.white, size = size.tiny)
+
+// =====================================================================
+//  비교 테이블
+// =====================================================================
+string oMode = o_strong ? "VOLCANO(Stop)" : "STARS(Limit)"
+string oSig  = o_bVOLCANO ? "롱Stop" : o_bSTARS ? "롱Limit" : o_sVOLCANO ? "숏Stop" : o_sSTARS ? "숏Limit" : "-"
+string aMode = aBreak ? "돌파(Breakout)" : "회귀(MeanRev)"
+string aSig  = aLongBrk ? "롱돌파" : aLongSta ? "롱회귀" : aShortBrk ? "숏돌파" : aShortSta ? "숏회귀" : "-"
+
+var table tb = table.new(position.top_right, 3, 6, border_width = 1, frame_color = color.new(#434651, 40), frame_width = 1)
+if showTable and barstate.islast
+    color ch = color.new(#131722, 8)
+    color cv = color.new(#1e222d, 8)
+    color cv2= color.new(#161a24, 8)
+    f_row(int r, string label, string ov, string av, color oc, color ac) =>
+        table.cell(tb, 0, r, label, text_size = size.small, text_color = color.white, bgcolor = ch)
+        table.cell(tb, 1, r, ov, text_size = size.small, text_color = oc, bgcolor = cv)
+        table.cell(tb, 2, r, av, text_size = size.small, text_color = ac, bgcolor = cv2)
+    table.cell(tb, 0, 0, "항목",     text_size = size.small, text_color = color.new(color.white,30), bgcolor = ch)
+    table.cell(tb, 1, 0, "원본 VOLCANO", text_size = size.small, text_color = #f23645, bgcolor = cv)
+    table.cell(tb, 2, 0, "재구성 AVC",   text_size = size.small, text_color = #ff9b3d, bgcolor = cv2)
+    f_row(1, "채널 상단", str.tostring(o_high, format.mintick), str.tostring(a_high, format.mintick), color.white, color.white)
+    f_row(2, "채널 하단", str.tostring(o_low,  format.mintick), str.tostring(a_low,  format.mintick), color.white, color.white)
+    f_row(3, "룩백(봉)",  str.tostring(lkbk_per), str.tostring(aLook), color.white, color.white)
+    f_row(4, "모드",      oMode, aMode, o_strong ? #ffb74d : #82b1ff, aBreak ? #ffb74d : #82b1ff)
+    f_row(5, "현재 신호", oSig, aSig, oSig == "-" ? color.gray : color.white, aSig == "-" ? color.gray : color.white)
+
+// =====================================================================
+//  Alerts
+// =====================================================================
+alertcondition(o_bSTARS or o_bVOLCANO or o_sSTARS or o_sVOLCANO, "원본 신호", "VOLCANO(원본) 진입 셋업")
+alertcondition(aLongBrk or aLongSta or aShortBrk or aShortSta,   "AVC 신호",  "AVC(재구성) 진입 셋업")
