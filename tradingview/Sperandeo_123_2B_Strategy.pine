@@ -15,7 +15,7 @@ strategy("Sperandeo 3 & 2B Strategy", overlay=true, max_labels_count=500, max_li
 
 // ---------------- Inputs ----------------
 string gP  = "Pivot"
-int    n   = input.int(10, "Pivot(프랙탈) 기간", minval=2, group=gP)
+int    n   = input.int(5, "Pivot(프랙탈) 기간", minval=2, group=gP, tooltip="작을수록 민감. 3=매우 민감, 5=민감, 10=둔감")
 
 string gBT = "백테스트 진입/청산"
 bool   useP3   = input.bool(true,  "점3(추세전환) 신호로 매매", group=gBT)
@@ -33,16 +33,17 @@ int    toDate  = input.time(timestamp("2027-01-01T00:00"), "종료", group=gBT)
 string g2bf = "2B 신뢰도 필터"
 bool  f2bVol   = input.bool(true,  "거래량 확인", group=g2bf)
 float volMult  = input.float(1.5,  "  · 거래량 배수(×SMA)", minval=0.1, step=0.1, group=g2bf)
-int   volLen   = input.int(20,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
+int   volLen   = input.int(10,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
 bool  f2bWick  = input.bool(true,  "ATR 거부 꼬리", group=g2bf)
 float wickMult = input.float(1.0,  "  · 꼬리 ATR 배수", minval=0.1, step=0.1, group=g2bf)
 bool  f2bFresh = input.bool(true,  "되돌림 N봉 이내", group=g2bf)
-int   b2bMaxBars = input.int(10,   "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
-int   atrLen   = input.int(14,     "  · ATR 기간", minval=1, group=g2bf)
+int   b2bMaxBars = input.int(5,    "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
+int   atrLen   = input.int(7,      "  · ATR 기간", minval=1, group=g2bf)
 
 string gViz = "표시"
 bool  show123 = input.bool(true,  "1-2-3 라벨", group=gViz)
-int   setupExpireBars = input.int(60, "셋업 유효기간(봉)", minval=5, group=gViz)
+int   setupExpireBars = input.int(30, "셋업 유효기간(봉)", minval=5, group=gViz)
+float testTolMult = input.float(0.5, "점2 재시험 허용치(ATR배수)", minval=0.0, step=0.1, group=gViz, tooltip="점2가 1번 지지/저항을 이 ATR배수만큼 살짝 침범(스프링)해도 인정하고, 그 범위 안에선 무효화하지 않음. 0=엄격")
 bool  show2b  = input.bool(true,  "2B 라벨", group=gViz)
 bool  showTL  = input.bool(true,  "추세선", group=gViz)
 color colTop  = input.color(color.red,   "하락(상단) 색", group=gViz)
@@ -115,6 +116,10 @@ bool fireBot3 = false      // 하단 점3 (상승전환 확정)  → 매수
 bool fire2Bbear = false    // 하락형 2B                 → 매도
 bool fire2Bbull = false    // 상승형 2B                 → 매수
 
+// 재시험 허용치 (ATR 기반) — 점2가 1번 레벨을 살짝 침범해도 인정하는 여유
+float atrVal = ta.atr(atrLen)
+float tol    = testTolMult * nz(atrVal)
+
 // ================= 상단: 하락전환 1-2-3 =================
 var int   topSt   = 0
 var float topHigh = na
@@ -130,8 +135,8 @@ if show123
         topHigh := na
         topLow := na
         topStartBar := na
-    // 무효화: 직전 고점 위로 신고점
-    if topSt != 0 and not na(topHigh) and high > topHigh
+    // 무효화: 직전 고점 위로 신고점 (허용치 초과 시에만)
+    if topSt != 0 and not na(topHigh) and high > topHigh + tol
         topSt := 0
         topHigh := na
         topLow := na
@@ -144,7 +149,7 @@ if show123
         topStartBar := bar_index
         mk(bar_index, high, "1", false, colTop)
     // 점 2 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
-    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh and (bar_index - n) > topStartBar
+    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh + tol and (bar_index - n) > topStartBar
         topSt := 2
         topLow := dn1
         mk(bar_index - n, ph, "2", false, colTop)
@@ -172,8 +177,8 @@ if show123
         botLow := na
         botHigh := na
         botStartBar := na
-    // 무효화: 직전 저점 아래로 신저점
-    if botSt != 0 and not na(botLow) and low < botLow
+    // 무효화: 직전 저점 아래로 신저점 (허용치 초과 시에만)
+    if botSt != 0 and not na(botLow) and low < botLow - tol
         botSt := 0
         botLow := na
         botHigh := na
@@ -186,7 +191,7 @@ if show123
         botStartBar := bar_index
         mk(bar_index, low, "1", true, colBot)
     // 점 2 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
-    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow and (bar_index - n) > botStartBar
+    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow - tol and (bar_index - n) > botStartBar
         botSt := 2
         botHigh := up1
         mk(bar_index - n, pl, "2", true, colBot)
@@ -200,7 +205,6 @@ if show123
         botStartBar := na
 
 // ================= 2B (신뢰도 필터: 거래량 · ATR 거부꼬리 · 되돌림 신속성) =================
-float atrVal = ta.atr(atrLen)
 float volSMA = ta.sma(nz(volume), volLen)
 
 var float b2bTop = na
