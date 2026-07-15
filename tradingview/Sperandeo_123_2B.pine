@@ -20,6 +20,7 @@ color colBot  = input.color(color.green, "상승전환(하단) 색", group=g123)
 bool  showTL  = input.bool(true,  "추세선 표시", group=g123)
 
 int setupExpireBars = input.int(30, "셋업 유효기간(봉)", minval=5, group=g123)
+float testTolMult = input.float(0.5, "점2 재시험 허용치(ATR배수)", minval=0.0, step=0.1, group=g123, tooltip="점2가 1번 지지/저항을 이 ATR배수만큼 살짝 침범(스프링)해도 인정하고, 그 범위 안에선 무효화하지 않음. 0=엄격(반드시 higher-low/lower-high)")
 
 string g2b = "2B 규칙"
 bool  show2b = input.bool(true, "2B 표시", group=g2b)
@@ -133,6 +134,10 @@ bool fireBot3 = false
 bool fire2Bbear = false
 bool fire2Bbull = false
 
+// 재시험 허용치 (ATR 기반) — 점2가 1번 레벨을 살짝 침범해도 인정하는 여유
+float atrVal = ta.atr(atrLen)
+float tol    = testTolMult * nz(atrVal)
+
 // ================= 상단: 하락전환 1-2-3 =================
 var int   topSt   = 0
 var float topHigh = na
@@ -150,8 +155,8 @@ if show123
         topLow := na
         topStartBar := na
 
-    // 무효화: 직전 고점 위로 신고점
-    if topSt != 0 and not na(topHigh) and high > topHigh
+    // 무효화: 직전 고점 위로 신고점 (허용치 초과 시에만 → 살짝 침범은 무효화 안 함)
+    if topSt != 0 and not na(topHigh) and high > topHigh + tol
         topSt := 0
         topHigh := na
         topLow := na
@@ -166,8 +171,8 @@ if show123
         mk(bar_index, high, "1", false, colTop)
         fireTop1 := true
 
-    // 점 2: 직전 고점 재시험 실패 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
-    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh and (bar_index - n) > topStartBar
+    // 점 2: 직전 고점 재시험 실패 (살짝 넘어섰다 실패해도 허용, 피벗이 점1 이후일 때만)
+    if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh + tol and (bar_index - n) > topStartBar
         topSt := 2
         topLow := dn1
         mk(bar_index - n, ph, "2", false, colTop)
@@ -198,8 +203,8 @@ if show123
         botHigh := na
         botStartBar := na
 
-    // 무효화: 직전 저점 아래로 신저점
-    if botSt != 0 and not na(botLow) and low < botLow
+    // 무효화: 직전 저점 아래로 신저점 (허용치 초과 시에만 → 지지 근처 스프링은 무효화 안 함)
+    if botSt != 0 and not na(botLow) and low < botLow - tol
         botSt := 0
         botLow := na
         botHigh := na
@@ -214,8 +219,8 @@ if show123
         mk(bar_index, low, "1", true, colBot)
         fireBot1 := true
 
-    // 점 2: 직전 저점 재시험 실패 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
-    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow and (bar_index - n) > botStartBar
+    // 점 2: 직전 저점 재시험 (지지 근처까지 눌렀다 올라오면 인정, 피벗이 점1 이후일 때만)
+    if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow - tol and (bar_index - n) > botStartBar
         botSt := 2
         botHigh := up1
         mk(bar_index - n, pl, "2", true, colBot)
@@ -230,7 +235,6 @@ if show123
         botStartBar := na
 
 // ================= 2B (신뢰도 필터: 거래량 · ATR 거부꼬리 · 되돌림 신속성) =================
-float atrVal = ta.atr(atrLen)
 float volSMA = ta.sma(nz(volume), volLen)
 
 var float b2bTop = na
