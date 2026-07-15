@@ -1,0 +1,179 @@
+//@version=6
+// =====================================================================
+//  VOLCANO Original (Indicator)  — © tlswn128 로직 기반
+// ---------------------------------------------------------------------
+//  원본 전략(VOLCANO_DBAPI)의 핵심 계산·진입조건을 '그대로' 유지한 인디케이터 버전.
+//  - 변경: strategy() → indicator(), 주문/포지션 로직은 신호·레벨 표시로 대체
+//  - 제거: 실계좌 웹훅 주문 코드(계좌번호 포함), atchart/DBTV 사설 라이브러리(미사용 intrade)
+//          → 공개/인디케이터 환경에 맞게 안전하게 정리 (매매 계산 로직은 손대지 않음)
+// =====================================================================
+indicator("VOLCANO Original", overlay = true, max_bars_back = 1000)
+
+// ---------------- Inputs ----------------
+// (주말 진입 금지 시간대 — 원본과 동일, 신호 표시 억제에 사용)
+input_hour1  = input.int(defval = 14, title = "Market Closing Time", minval = 0, maxval = 23)
+input_hour2  = input.int(defval = 16, title = "Market Open Time",    minval = 0, maxval = 25)
+input_minute = input.int(defval = 35, title = "Minute",              minval = 0, maxval = 59)
+
+float commission_in_ticks = input.float(0.5, title = "Commission(tick)")
+int   spread_in_ticks     = input.int(1,     title = "Spread(tick)")
+
+bool showSignals = input.bool(true, "진입 신호 표시", group = "표시")
+bool showLevels  = input.bool(true, "진입 레벨 표시", group = "표시")
+bool showTable   = input.bool(true, "상태 테이블",   group = "표시")
+
+// ---------------- Friday close window (원본 로직 유지) ----------------
+bool is_friday = false
+if dayofweek == dayofweek.friday
+    is_friday := true
+
+bool closing_time = false
+if is_friday and ((hour(time) >= input_hour1 and minute(time) >= input_minute) or hour(time) > input_hour1) and hour(time) < input_hour2
+    closing_time := true
+
+// ---------------- 변동성/채널 계산 (원본 그대로) ----------------
+int bars_in_one_week = 240
+float virtual_margin = (ta.highest(bars_in_one_week) - ta.lowest(bars_in_one_week)) * syminfo.pointvalue
+
+float candle_profit        = math.max(ta.tr(true) / syminfo.mintick, 1) * syminfo.mintick * syminfo.pointvalue
+float candle_profit_w_cost = math.max((ta.tr(true) / syminfo.mintick - 2 * (commission_in_ticks + spread_in_ticks)), 1) * syminfo.mintick * syminfo.pointvalue
+
+float ahn_tr        = (math.log(candle_profit / virtual_margin) + 9) * 10
+float ahn_tr_w_cost = (math.log(candle_profit_w_cost / virtual_margin) + 9) * 10
+int   lkbk_per      = nz(math.floor(math.max(ahn_tr_w_cost, 1)))   // ahn_tr_w_cost 기반 룩백기간
+
+float prev_high    = ta.highest(math.max(1, lkbk_per))
+float prev_low     = ta.lowest(math.max(1, lkbk_per))
+float channel_size = prev_high - prev_low
+
+int n_to_prev_high = - ta.highestbars(math.max(1, lkbk_per)) + 1
+int n_to_prev_low  = - ta.lowestbars(math.max(1, lkbk_per)) + 1
+int min_per_w_same_channel = math.max(n_to_prev_high, n_to_prev_low)
+
+float alpha_ma_ahn_tr = 2 / (min_per_w_same_channel + 1)
+float ma_ahn_tr = 0
+ma_ahn_tr := na(ma_ahn_tr[1]) ? ahn_tr : alpha_ma_ahn_tr * ahn_tr + (1 - alpha_ma_ahn_tr) * nz(ma_ahn_tr[1])
+
+float alpha_ma_ahn_tr_w_cost = 2 / (min_per_w_same_channel + 1)
+float ma_ahn_tr_w_cost = 0
+ma_ahn_tr_w_cost := na(ma_ahn_tr_w_cost[1]) ? ahn_tr_w_cost : alpha_ma_ahn_tr_w_cost * ahn_tr_w_cost + (1 - alpha_ma_ahn_tr_w_cost) * nz(ma_ahn_tr_w_cost[1])
+
+float max_candle_profit = 0
+float max_candle_profit_w_cost = 0
+for cnt = 0 to min_per_w_same_channel - 1
+    if candle_profit[cnt] >= max_candle_profit
+        max_candle_profit := candle_profit[cnt]
+for cnt = 0 to min_per_w_same_channel - 1
+    if candle_profit_w_cost[cnt] >= max_candle_profit_w_cost
+        max_candle_profit_w_cost := candle_profit_w_cost[cnt]
+
+// 변동성(수익률 표준편차)
+float close_rate_return = (close - close[1]) / close[1]
+float high_rate_return  = (high - high[1]) / high[1]
+float low_rate_return   = (low - low[1]) / low[1]
+float vol_val_close = ta.stdev(close_rate_return, min_per_w_same_channel, false)
+float vol_val_high  = ta.stdev(high_rate_return,  min_per_w_same_channel, false)
+float vol_val_low   = ta.stdev(low_rate_return,   min_per_w_same_channel, false)
+
+// Profit/stop factors
+int direct_comb  = nz(math.floor(min_per_w_same_channel / 2))
+int inverse_comb = nz(math.ceil(math.exp(16 / 4) / direct_comb))
+
+float tr_adj_direct_sum = 0
+float max_atr_adj_direct = 0
+float tr_adj_direct = ta.highest(math.max(1, direct_comb)) - ta.lowest(math.max(1, direct_comb))
+for cnt = 0 to min_per_w_same_channel - 1
+    tr_adj_direct_sum := tr_adj_direct_sum + tr_adj_direct[cnt]
+float atr_adj_direct = tr_adj_direct_sum / min_per_w_same_channel
+for cnt = 0 to min_per_w_same_channel - 1
+    if atr_adj_direct[cnt] >= max_atr_adj_direct
+        max_atr_adj_direct := atr_adj_direct[cnt]
+float ave_atr_adj_direct = ta.sma(atr_adj_direct, min_per_w_same_channel)
+float vol_atr_adj_direct = ta.stdev(atr_adj_direct, min_per_w_same_channel, false)
+
+float tr_adj_inverse_sum = 0
+float max_atr_adj_inverse = 0
+float tr_adj_inverse = ta.highest(math.max(1, inverse_comb)) - ta.lowest(math.max(1, inverse_comb))
+for cnt = 0 to min_per_w_same_channel - 1
+    tr_adj_inverse_sum := tr_adj_inverse_sum + tr_adj_inverse[cnt]
+float atr_adj_inverse = tr_adj_inverse_sum / min_per_w_same_channel
+for cnt = 0 to min_per_w_same_channel - 1
+    if atr_adj_inverse[cnt] >= max_atr_adj_inverse
+        max_atr_adj_inverse := atr_adj_inverse[cnt]
+float ave_atr_adj_inverse = ta.sma(atr_adj_inverse, min_per_w_same_channel)
+float vol_atr_adj_inverse = ta.stdev(atr_adj_inverse, min_per_w_same_channel, false)
+
+// Series-type ATR (buffer)
+float alpha_atr = 1 / min_per_w_same_channel
+float buffer = 0
+float _atr_initial = ta.sma(ta.tr(true), min_per_w_same_channel)
+float _atr = alpha_atr * ta.tr(true) + (1 - alpha_atr) * nz(buffer[1])
+buffer := na(buffer[1]) ? _atr_initial : _atr
+
+// Exit levels (원본 그대로 — 표시/참고용)
+float profit_level_direct   = max_atr_adj_direct
+float stop_level_direct     = atr_adj_direct
+float trigger_level_direct  = atr_adj_direct
+float trailing_level_direct = buffer / math.sqrt(4)
+float profit_level_inverse   = max_atr_adj_inverse
+float stop_level_inverse     = atr_adj_inverse
+float trigger_level_inverse  = atr_adj_inverse + buffer / math.sqrt(2)
+float trailing_level_inverse = buffer / math.sqrt(2)
+
+// Directional momentum
+float scaled_candle_profit        = math.log(candle_profit / syminfo.mintick / syminfo.pointvalue) * math.exp(2)
+float scaled_candle_profit_w_cost = math.log(candle_profit_w_cost / syminfo.mintick / syminfo.pointvalue) * math.exp(2)
+float directional_momentum        = (scaled_candle_profit_w_cost - 25) * 2
+
+// ---------------- 진입 조건 (원본 그대로) ----------------
+bool long_limit_cond  = vol_val_low  - vol_val_low[1]  < 0 and ahn_tr_w_cost + directional_momentum <= ma_ahn_tr_w_cost[1]
+bool long_stop_cond   = vol_val_low  - vol_val_low[1]  < 0 and ahn_tr_w_cost + directional_momentum >  ma_ahn_tr_w_cost[1]
+bool short_limit_cond = vol_val_high - vol_val_high[1] < 0 and ahn_tr_w_cost + directional_momentum <= ma_ahn_tr_w_cost[1]
+bool short_stop_cond  = vol_val_high - vol_val_high[1] < 0 and ahn_tr_w_cost + directional_momentum >  ma_ahn_tr_w_cost[1]
+
+bool active = not closing_time
+bool bSTARS   = long_limit_cond  and active   // 롱 Limit  : prev_low - buffer
+bool bVOLCANO = long_stop_cond   and active   // 롱 Stop   : prev_high
+bool sSTARS   = short_limit_cond and active   // 숏 Limit  : prev_high + buffer
+bool sVOLCANO = short_stop_cond  and active   // 숏 Stop   : prev_low
+
+// ---------------- 채널 표시 (원본 유지) ----------------
+plot(prev_high, "prev_high", color = color.new(color.green, 0), linewidth = 2)
+plot(prev_low,  "prev_low",  color = color.new(color.red, 0),   linewidth = 2)
+
+// ---------------- 진입 신호/레벨 표시 ----------------
+plotshape(showSignals and bSTARS,   "bSTARS (롱 Limit)",  style = shape.circle,       location = location.belowbar, color = color.new(#26c6da, 0), text = "STARS",   textcolor = color.white, size = size.tiny)
+plotshape(showSignals and bVOLCANO, "bVOLCANO (롱 Stop)", style = shape.triangleup,   location = location.belowbar, color = color.new(#00e676, 0), text = "VOLCANO", textcolor = color.white, size = size.tiny)
+plotshape(showSignals and sSTARS,   "sSTARS (숏 Limit)",  style = shape.circle,       location = location.abovebar, color = color.new(#e040fb, 0), text = "STARS",   textcolor = color.white, size = size.tiny)
+plotshape(showSignals and sVOLCANO, "sVOLCANO (숏 Stop)", style = shape.triangledown, location = location.abovebar, color = color.new(#ff5252, 0), text = "VOLCANO", textcolor = color.white, size = size.tiny)
+
+plot(showLevels and bSTARS   ? prev_low - buffer  : na, "bSTARS 레벨",   color = color.new(#26c6da, 0), style = plot.style_circles, linewidth = 2)
+plot(showLevels and bVOLCANO ? prev_high          : na, "bVOLCANO 레벨", color = color.new(#00e676, 0), style = plot.style_cross,   linewidth = 2)
+plot(showLevels and sSTARS   ? prev_high + buffer : na, "sSTARS 레벨",   color = color.new(#e040fb, 0), style = plot.style_circles, linewidth = 2)
+plot(showLevels and sVOLCANO ? prev_low           : na, "sVOLCANO 레벨", color = color.new(#ff5252, 0), style = plot.style_cross,   linewidth = 2)
+
+// ---------------- 상태 테이블 ----------------
+bool strongVol = ahn_tr_w_cost + directional_momentum > ma_ahn_tr_w_cost[1]   // 강변동 → VOLCANO(stop), 약변동 → STARS(limit)
+var table tb = table.new(position.top_right, 2, 6, border_width = 1, frame_color = color.new(#434651, 40), frame_width = 1)
+if showTable and barstate.islast
+    c_hdr = color.new(#131722, 10)
+    c_val = color.new(#1e222d, 10)
+    table.cell(tb, 0, 0, "모드",       text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 0, strongVol ? "VOLCANO (Stop)" : "STARS (Limit)", text_size = size.small, text_color = strongVol ? #ffb74d : #82b1ff, bgcolor = c_val)
+    table.cell(tb, 0, 1, "룩백기간",   text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 1, str.tostring(lkbk_per) + " 봉", text_size = size.small, text_color = color.white, bgcolor = c_val)
+    table.cell(tb, 0, 2, "채널크기",   text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 2, str.tostring(channel_size, format.mintick), text_size = size.small, text_color = color.white, bgcolor = c_val)
+    table.cell(tb, 0, 3, "ahn_tr(비용)", text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 3, str.tostring(ahn_tr_w_cost, "#.0") + " / MA " + str.tostring(ma_ahn_tr_w_cost, "#.0"), text_size = size.small, text_color = color.white, bgcolor = c_val)
+    table.cell(tb, 0, 4, "PT/SL(direct)", text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 4, str.tostring(profit_level_direct / syminfo.mintick, "#") + " / " + str.tostring(stop_level_direct / syminfo.mintick, "#") + " tick", text_size = size.small, text_color = color.white, bgcolor = c_val)
+    table.cell(tb, 0, 5, "PT/SL(inverse)", text_size = size.small, text_color = color.white, bgcolor = c_hdr)
+    table.cell(tb, 1, 5, str.tostring(profit_level_inverse / syminfo.mintick, "#") + " / " + str.tostring(stop_level_inverse / syminfo.mintick, "#") + " tick", text_size = size.small, text_color = color.white, bgcolor = c_val)
+
+// ---------------- Alerts (계좌/웹훅 제거, 일반 신호 알림) ----------------
+alertcondition(bSTARS,   "bSTARS (롱 Limit)",  "VOLCANO: 롱 Limit(STARS) 셋업")
+alertcondition(bVOLCANO, "bVOLCANO (롱 Stop)", "VOLCANO: 롱 Stop(돌파) 셋업")
+alertcondition(sSTARS,   "sSTARS (숏 Limit)",  "VOLCANO: 숏 Limit(STARS) 셋업")
+alertcondition(sVOLCANO, "sVOLCANO (숏 Stop)", "VOLCANO: 숏 Stop(돌파) 셋업")
+alertcondition(bSTARS or bVOLCANO or sSTARS or sVOLCANO, "모든 신호", "VOLCANO: 진입 셋업 발생")
