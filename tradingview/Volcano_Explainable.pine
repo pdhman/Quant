@@ -1,0 +1,97 @@
+//@version=6
+// =====================================================================
+//  VOLCANO Explainable — 변동성 적응 채널 & 국면 기반 진입레벨 (인디케이터)
+// ---------------------------------------------------------------------
+//  원본(VOLCANO_DBAPI) 로직을 '설명 가능한' 표준 지표로 재구성한 버전.
+//  원본 → 재구성 대응표:
+//   · ahn_tr = (log(봉수익/주간레인지)+9)×10  →  변동성 비율 = ATR(단기)/ATR(장기)의 백분위(0~100)
+//   · lkbk_per = floor(ahn_tr)               →  적응형 룩백 = 백분위를 [최소~최대] 기간에 선형 매핑
+//   · prev_high / prev_low                   →  돈치안 채널 (그대로, 룩백만 적응형)
+//   · ahn_tr vs EMA(강/약 변동성)            →  백분위 > 임계 = 돌파(VOLCANO) 모드
+//                                               백분위 ≤ 임계 = 회귀(STARS) 모드
+//   · vol_val_low/high 감소(방향 필터)       →  원본 방식 유지 (저가/고가 수익률 표준편차 감소)
+//   · e⁴, √2, √4 등 임의 상수 청산 레벨      →  (전략화 시) ATR×배수 + R배수 트레일링으로 대체 예정
+//  모든 파라미터는 "ATR 몇 배 / 백분위 몇 % / 몇 봉" 단위 → 차트에서 직접 검증 가능.
+// =====================================================================
+indicator("VOLCANO Explainable", overlay=true, max_labels_count=500)
+
+// ---------------- Inputs ----------------
+string gV = "① 변동성 측정"
+int   atrFast  = input.int(5,   "ATR 단기 기간", minval=1, group=gV)
+int   atrSlow  = input.int(60,  "ATR 장기 기간", minval=2, group=gV)
+int   rankLen  = input.int(240, "백분위 산출 기간(봉)", minval=20, group=gV, tooltip="변동성 비율이 최근 N봉 중 상위 몇 %인지 계산. 원본의 '1주=240봉' 기준과 대응")
+
+string gC = "② 적응형 돈치안 채널"
+int   lenMin = input.int(20, "룩백 최소(봉)", minval=2, group=gC)
+int   lenMax = input.int(60, "룩백 최대(봉)", minval=5, group=gC, tooltip="변동성 백분위 0% → 최소, 100% → 최대 기간으로 선형 매핑")
+
+string gR = "③ 국면 판단"
+float volThr = input.float(60, "돌파 모드 임계 백분위(%)", minval=0, maxval=100, step=5, group=gR, tooltip="변동성 백분위가 이 값보다 크면 돌파(VOLCANO) 모드, 이하면 회귀(STARS) 모드")
+
+string gE = "④ 진입 레벨"
+float bufMult = input.float(1.0, "회귀 진입 버퍼 (ATR 배수)", minval=0.0, step=0.25, group=gE)
+int   bufAtrLen = input.int(14, "버퍼 ATR 기간", minval=1, group=gE)
+
+string gD = "표시"
+bool showBG    = input.bool(true, "국면 배경색", group=gD)
+bool showTable = input.bool(true, "상태 테이블", group=gD)
+
+// ---------------- ① 변동성 측정 (원본 ahn_tr 대체) ----------------
+// "지금 변동성이 평소 대비 얼마나 큰가"를 ATR 비율의 백분위로 표현
+float volRatio = ta.atr(atrFast) / ta.atr(atrSlow)
+float volRank  = ta.percentrank(volRatio, rankLen)   // 0~100 (%)
+
+// ---------------- ② 적응형 룩백 & 돈치안 채널 (원본 lkbk_per 대체) ----------------
+// 변동성이 높을수록 긴 룩백(넓은 채널) — 원본의 '높은 TR → 긴 기간' 의도를 명시적으로 구현
+int lookback = int(math.round(lenMin + (lenMax - lenMin) * nz(volRank, 50) / 100))
+float prevHigh = ta.highest(high, math.max(1, lookback))
+float prevLow  = ta.lowest(low,  math.max(1, lookback))
+
+plot(prevHigh, "채널 상단 (prev_high)", color=color.new(color.green, 20), linewidth=2)
+plot(prevLow,  "채널 하단 (prev_low)",  color=color.new(color.red, 20),   linewidth=2)
+plot((prevHigh + prevLow) / 2, "채널 중심", color=color.new(color.gray, 60), style=plot.style_linebr)
+
+// ---------------- ③ 국면: 돌파(VOLCANO) vs 회귀(STARS) ----------------
+bool breakoutMode = volRank > volThr        // 변동성 강함 → 돌파 매매
+bool meanrevMode  = not breakoutMode        // 변동성 약함 → 되돌림 매매
+
+bgcolor(showBG ? (breakoutMode ? color.new(color.orange, 92) : color.new(color.blue, 94)) : na, title="국면 배경(주황=돌파, 파랑=회귀)")
+
+// ---------------- 방향 필터 (원본 유지: 저가/고가 수익률 표준편차 감소) ----------------
+float lowRet  = (low - low[1]) / low[1]
+float highRet = (high - high[1]) / high[1]
+float volLow  = ta.stdev(lowRet,  math.max(2, lookback), false)
+float volHigh = ta.stdev(highRet, math.max(2, lookback), false)
+
+bool longSide  = volLow  - volLow[1]  < 0   // 아래쪽 변동성 안정 → 롱 후보
+bool shortSide = volHigh - volHigh[1] < 0   // 위쪽 변동성 안정 → 숏 후보
+
+// ---------------- ④ 진입 레벨 (원본 4가지 주문 대응) ----------------
+float buffer = bufMult * ta.atr(bufAtrLen)
+
+// 회귀(STARS) 모드: 채널 반대편에서 limit 대기
+float buyLimitLvl  = meanrevMode  and longSide  ? prevLow - buffer  : na   // 원본 bSTARS
+float sellLimitLvl = meanrevMode  and shortSide ? prevHigh + buffer : na   // 원본 sSTARS
+// 돌파(VOLCANO) 모드: 채널 돌파 방향으로 stop 대기
+float buyStopLvl   = breakoutMode and longSide  ? prevHigh : na            // 원본 bVOLCANO
+float sellStopLvl  = breakoutMode and shortSide ? prevLow  : na            // 원본 sVOLCANO
+
+plot(buyLimitLvl,  "매수 Limit (회귀)", color=color.new(color.teal, 0),   style=plot.style_circles, linewidth=2)
+plot(sellLimitLvl, "매도 Limit (회귀)", color=color.new(color.purple, 0), style=plot.style_circles, linewidth=2)
+plot(buyStopLvl,   "매수 Stop (돌파)",  color=color.new(color.lime, 0),   style=plot.style_cross,   linewidth=2)
+plot(sellStopLvl,  "매도 Stop (돌파)",  color=color.new(color.maroon, 0), style=plot.style_cross,   linewidth=2)
+
+// ---------------- 상태 테이블 ----------------
+var table tb = table.new(position.top_right, 2, 5, border_width=1)
+if showTable and barstate.islast
+    table.cell(tb, 0, 0, "변동성 백분위", text_size=size.small), table.cell(tb, 1, 0, str.tostring(volRank, "#.0") + " %", text_size=size.small)
+    table.cell(tb, 0, 1, "적응 룩백",     text_size=size.small), table.cell(tb, 1, 1, str.tostring(lookback) + " 봉", text_size=size.small)
+    table.cell(tb, 0, 2, "국면",          text_size=size.small), table.cell(tb, 1, 2, breakoutMode ? "돌파 (VOLCANO)" : "회귀 (STARS)", text_size=size.small, text_color=breakoutMode ? color.orange : color.blue)
+    table.cell(tb, 0, 3, "방향 후보",     text_size=size.small), table.cell(tb, 1, 3, (longSide ? "롱 " : "") + (shortSide ? "숏" : (longSide ? "" : "-")), text_size=size.small)
+    table.cell(tb, 0, 4, "진입 레벨",     text_size=size.small), table.cell(tb, 1, 4, not na(buyLimitLvl) ? "매수L " + str.tostring(buyLimitLvl, format.mintick) : not na(buyStopLvl) ? "매수S " + str.tostring(buyStopLvl, format.mintick) : not na(sellLimitLvl) ? "매도L " + str.tostring(sellLimitLvl, format.mintick) : not na(sellStopLvl) ? "매도S " + str.tostring(sellStopLvl, format.mintick) : "-", text_size=size.small)
+
+// ---------------- Alerts ----------------
+alertcondition(not na(buyLimitLvl)  and na(buyLimitLvl[1]),  "매수 Limit 셋업(회귀)", "VOLCANO-E: 회귀 매수 limit 셋업 발생")
+alertcondition(not na(buyStopLvl)   and na(buyStopLvl[1]),   "매수 Stop 셋업(돌파)",  "VOLCANO-E: 돌파 매수 stop 셋업 발생")
+alertcondition(not na(sellLimitLvl) and na(sellLimitLvl[1]), "매도 Limit 셋업(회귀)", "VOLCANO-E: 회귀 매도 limit 셋업 발생")
+alertcondition(not na(sellStopLvl)  and na(sellStopLvl[1]),  "매도 Stop 셋업(돌파)",  "VOLCANO-E: 돌파 매도 stop 셋업 발생")
