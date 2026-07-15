@@ -11,7 +11,7 @@ indicator("Reversal 123_v2", overlay=true, max_labels_count=500, max_lines_count
 
 // ---------------- Inputs ----------------
 string gP  = "Pivot"
-int    n   = input.int(10, "Pivot(프랙탈) 기간", minval=2, group=gP)
+int    n   = input.int(5, "Pivot(프랙탈) 기간", minval=2, group=gP, tooltip="작을수록 민감(작은 눌림도 피벗으로 잡고 확정 빠름). 3=매우 민감, 5=민감, 10=둔감")
 
 string g123 = "1-2-3 규칙"
 bool  show123 = input.bool(true,  "1-2-3 표시", group=g123)
@@ -19,7 +19,7 @@ color colTop  = input.color(color.red,   "하락전환(상단) 색", group=g123)
 color colBot  = input.color(color.green, "상승전환(하단) 색", group=g123)
 bool  showTL  = input.bool(true,  "추세선 표시", group=g123)
 
-int setupExpireBars = input.int(60, "셋업 유효기간(봉)", minval=5, group=g123)
+int setupExpireBars = input.int(30, "셋업 유효기간(봉)", minval=5, group=g123)
 
 string g2b = "2B 규칙"
 bool  show2b = input.bool(true, "2B 표시", group=g2b)
@@ -27,12 +27,12 @@ bool  show2b = input.bool(true, "2B 표시", group=g2b)
 string g2bf = "2B 신뢰도 필터"
 bool  f2bVol   = input.bool(true,  "거래량 확인", group=g2bf)
 float volMult  = input.float(1.5,  "  · 거래량 배수(×SMA)", minval=0.1, step=0.1, group=g2bf)
-int   volLen   = input.int(20,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
+int   volLen   = input.int(10,     "  · 거래량 SMA 기간", minval=1, group=g2bf)
 bool  f2bWick  = input.bool(true,  "ATR 거부 꼬리", group=g2bf)
 float wickMult = input.float(1.0,  "  · 꼬리 ATR 배수", minval=0.1, step=0.1, group=g2bf)
 bool  f2bFresh = input.bool(true,  "되돌림 N봉 이내", group=g2bf)
-int   b2bMaxBars = input.int(10,   "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
-int   atrLen   = input.int(14,     "  · ATR 기간", minval=1, group=g2bf)
+int   b2bMaxBars = input.int(5,    "  · 경신→되돌림 최대 봉수", minval=1, group=g2bf)
+int   atrLen   = input.int(7,      "  · ATR 기간", minval=1, group=g2bf)
 
 int labelTransp = input.int(50, "라벨 투명도", minval=0, maxval=100, group=g123)
 
