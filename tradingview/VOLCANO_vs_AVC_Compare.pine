@@ -153,21 +153,37 @@ string aSig  = aLongBrk ? "롱돌파" : aLongSta ? "롱회귀" : aShortBrk ? "�
 
 var table tb = table.new(position.top_right, 3, 6, border_width = 1, frame_color = color.new(#434651, 40), frame_width = 1)
 if showTable and barstate.islast
-    color ch = color.new(#131722, 8)
-    color cv = color.new(#1e222d, 8)
-    color cv2= color.new(#161a24, 8)
-    f_row(int r, string label, string ov, string av, color oc, color ac) =>
-        table.cell(tb, 0, r, label, text_size = size.small, text_color = color.white, bgcolor = ch)
-        table.cell(tb, 1, r, ov, text_size = size.small, text_color = oc, bgcolor = cv)
-        table.cell(tb, 2, r, av, text_size = size.small, text_color = ac, bgcolor = cv2)
-    table.cell(tb, 0, 0, "항목",     text_size = size.small, text_color = color.new(color.white,30), bgcolor = ch)
+    color ch  = color.new(#131722, 8)
+    color cv  = color.new(#1e222d, 8)
+    color cv2 = color.new(#161a24, 8)
+    color oModeC = o_strong ? #ffb74d : #82b1ff
+    color aModeC = aBreak   ? #ffb74d : #82b1ff
+    color oSigC  = oSig == "-" ? color.gray : color.white
+    color aSigC  = aSig == "-" ? color.gray : color.white
+    // 헤더
+    table.cell(tb, 0, 0, "항목",         text_size = size.small, text_color = color.new(color.white, 30), bgcolor = ch)
     table.cell(tb, 1, 0, "원본 VOLCANO", text_size = size.small, text_color = #f23645, bgcolor = cv)
     table.cell(tb, 2, 0, "재구성 AVC",   text_size = size.small, text_color = #ff9b3d, bgcolor = cv2)
-    f_row(1, "채널 상단", str.tostring(o_high, format.mintick), str.tostring(a_high, format.mintick), color.white, color.white)
-    f_row(2, "채널 하단", str.tostring(o_low,  format.mintick), str.tostring(a_low,  format.mintick), color.white, color.white)
-    f_row(3, "룩백(봉)",  str.tostring(lkbk_per), str.tostring(aLook), color.white, color.white)
-    f_row(4, "모드",      oMode, aMode, o_strong ? #ffb74d : #82b1ff, aBreak ? #ffb74d : #82b1ff)
-    f_row(5, "현재 신호", oSig, aSig, oSig == "-" ? color.gray : color.white, aSig == "-" ? color.gray : color.white)
+    // 채널 상단
+    table.cell(tb, 0, 1, "채널 상단", text_size = size.small, text_color = color.white, bgcolor = ch)
+    table.cell(tb, 1, 1, str.tostring(o_high, format.mintick), text_size = size.small, text_color = color.white, bgcolor = cv)
+    table.cell(tb, 2, 1, str.tostring(a_high, format.mintick), text_size = size.small, text_color = color.white, bgcolor = cv2)
+    // 채널 하단
+    table.cell(tb, 0, 2, "채널 하단", text_size = size.small, text_color = color.white, bgcolor = ch)
+    table.cell(tb, 1, 2, str.tostring(o_low, format.mintick), text_size = size.small, text_color = color.white, bgcolor = cv)
+    table.cell(tb, 2, 2, str.tostring(a_low, format.mintick), text_size = size.small, text_color = color.white, bgcolor = cv2)
+    // 룩백
+    table.cell(tb, 0, 3, "룩백(봉)", text_size = size.small, text_color = color.white, bgcolor = ch)
+    table.cell(tb, 1, 3, str.tostring(lkbk_per), text_size = size.small, text_color = color.white, bgcolor = cv)
+    table.cell(tb, 2, 3, str.tostring(aLook), text_size = size.small, text_color = color.white, bgcolor = cv2)
+    // 모드
+    table.cell(tb, 0, 4, "모드", text_size = size.small, text_color = color.white, bgcolor = ch)
+    table.cell(tb, 1, 4, oMode, text_size = size.small, text_color = oModeC, bgcolor = cv)
+    table.cell(tb, 2, 4, aMode, text_size = size.small, text_color = aModeC, bgcolor = cv2)
+    // 현재 신호
+    table.cell(tb, 0, 5, "현재 신호", text_size = size.small, text_color = color.white, bgcolor = ch)
+    table.cell(tb, 1, 5, oSig, text_size = size.small, text_color = oSigC, bgcolor = cv)
+    table.cell(tb, 2, 5, aSig, text_size = size.small, text_color = aSigC, bgcolor = cv2)
 
 // =====================================================================
 //  Alerts
