@@ -139,9 +139,9 @@ bool sVOLCANO = short_stop_cond  and active   // 숏 Stop   : prev_low
 
 // 진입은 '조건 충족(주문 배치)'만으로 성립하지 않음. 가격이 주문 레벨(=채널선)에 닿아야 체결.
 // 각 셋업의 주문 레벨
-float buyLimitLvl  = prev_low  - o_buffer   // bSTARS  (롱 Limit)
-float buyStopLvl   = prev_high              // bVOLCANO(롱 Stop)
-float sellLimitLvl = prev_high + o_buffer   // sSTARS  (숏 Limit)
+float buyLimitLvl  = prev_low  - buffer   // bSTARS  (롱 Limit)
+float buyStopLvl   = prev_high            // bVOLCANO(롱 Stop)
+float sellLimitLvl = prev_high + buffer   // sSTARS  (숏 Limit)
 float sellStopLvl  = prev_low               // sVOLCANO(숏 Stop)
 
 bool fillOnly = input.bool(true, "레벨 도달(체결) 시에만 표시", group = "표시", tooltip = "가격이 주문 레벨(채널선)에 닿는 봉에만 마커 표시. 끄면 조건 충족 봉 전부 표시")
