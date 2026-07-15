@@ -1,0 +1,155 @@
+//@version=6
+// =====================================================================
+//  Adaptive Volatility Channel — Strategy (백테스트 버전)
+// ---------------------------------------------------------------------
+//  인디케이터 "Adaptive Volatility Channel"과 동일한 신호 로직:
+//   · ATR(단기/장기) 비율의 백분위 → 적응형 돈치안 채널(룩백 [최소~최대] 매핑)
+//   · 백분위 > 임계 = 돌파 모드(채널 돌파 stop 진입) / 이하 = 회귀 모드(채널 끝 limit 진입)
+//   · 방향 필터: 저가/고가 수익률 표준편차 감소(원본 VOLCANO 방식)
+//  청산(원본의 e⁴/√2 임의 상수 대체 → 설명 가능한 구조):
+//   · 초기 손절 = 진입가 ∓ ATR×배수  (이 거리가 1R)
+//   · 이익 ≥ 1R → 넓은 트레일링(샹들리에) 시작
+//   · 이익 ≥ 2R → 트레일링 타이트하게
+//   · 손절선은 절대 느슨해지지 않음
+//  체결: 신호는 봉 마감 확정, limit/stop 대기주문으로 진입 (룩어헤드 없음)
+// =====================================================================
+strategy("Adaptive Volatility Channel Strategy", overlay=true,
+     initial_capital=10000000, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.15, pyramiding=0, calc_on_every_tick=false)
+
+// ---------------- Inputs ----------------
+string gV = "① 변동성 측정"
+int   atrFast  = input.int(5,   "ATR 단기 기간", minval=1, group=gV)
+int   atrSlow  = input.int(60,  "ATR 장기 기간", minval=2, group=gV)
+int   rankLen  = input.int(240, "백분위 산출 기간(봉)", minval=20, group=gV)
+
+string gC = "② 적응형 돈치안 채널"
+int   lenMin = input.int(20, "룩백 최소(봉)", minval=2, group=gC)
+int   lenMax = input.int(60, "룩백 최대(봉)", minval=5, group=gC)
+
+string gR = "③ 국면 판단"
+float volThr = input.float(60, "돌파 모드 임계 백분위(%)", minval=0, maxval=100, step=5, group=gR)
+
+string gE = "④ 진입"
+float bufMult   = input.float(1.0, "회귀 진입 버퍼 (ATR 배수)", minval=0.0, step=0.25, group=gE)
+int   bufAtrLen = input.int(14, "버퍼 ATR 기간", minval=1, group=gE)
+string dirMode  = input.string("롱&숏", "매매 방향", options=["롱only","숏only","롱&숏"], group=gE)
+
+string gX = "⑤ 청산 (ATR 손절 + R배수 단계 트레일링)"
+float slMult    = input.float(2.0, "초기 손절 ATR 배수 (=1R)", minval=0.5, step=0.25, group=gX)
+float trig1R    = input.float(1.0, "1단계 트레일 시작 (R)", minval=0.1, step=0.25, group=gX)
+float trail1Mlt = input.float(3.0, "1단계 트레일 ATR 배수(넓게)", minval=0.5, step=0.25, group=gX)
+float trig2R    = input.float(2.0, "2단계 트레일 시작 (R)", minval=0.2, step=0.25, group=gX)
+float trail2Mlt = input.float(1.5, "2단계 트레일 ATR 배수(타이트)", minval=0.25, step=0.25, group=gX)
+int   exAtrLen  = input.int(14, "청산 ATR 기간", minval=1, group=gX)
+
+string gF = "⑥ 기타 필터"
+bool  useDate  = input.bool(false, "기간 제한", group=gF)
+int   fromDate = input.time(timestamp("2016-01-01T00:00"), "시작", group=gF)
+int   toDate   = input.time(timestamp("2027-01-01T00:00"), "종료", group=gF)
+bool  friClose = input.bool(false, "금요일 마감 전 청산(선물용)", group=gF)
+
+// ---------------- ① 변동성 측정 ----------------
+float volRatio = ta.atr(atrFast) / ta.atr(atrSlow)
+float volRank  = ta.percentrank(volRatio, rankLen)
+
+// ---------------- ② 적응형 룩백 & 돈치안 채널 ----------------
+int lookback = int(math.round(lenMin + (lenMax - lenMin) * nz(volRank, 50) / 100))
+float prevHigh = ta.highest(high, math.max(1, lookback))
+float prevLow  = ta.lowest(low,  math.max(1, lookback))
+
+color COL_UP = #f23645
+color COL_DN = #089981
+plot(prevHigh, "채널 상단", color=color.new(COL_UP, 25), linewidth=2)
+plot(prevLow,  "채널 하단", color=color.new(COL_DN, 25), linewidth=2)
+
+// ---------------- ③ 국면 ----------------
+bool breakoutMode = volRank > volThr
+bool meanrevMode  = not breakoutMode
+bgcolor(breakoutMode ? color.new(#ff9800, 93) : color.new(#2962ff, 95))
+
+// ---------------- 방향 필터 (원본 방식) ----------------
+float lowRet  = (low - low[1]) / low[1]
+float highRet = (high - high[1]) / high[1]
+float volLow  = ta.stdev(lowRet,  math.max(2, lookback), false)
+float volHigh = ta.stdev(highRet, math.max(2, lookback), false)
+bool longSide  = volLow  - volLow[1]  < 0
+bool shortSide = volHigh - volHigh[1] < 0
+
+// ---------------- ④ 진입 (원본 4주문: 우선순위도 원본과 동일) ----------------
+float buffer = bufMult * ta.atr(bufAtrLen)
+bool  longOK  = dirMode != "숏only"
+bool  shortOK = dirMode != "롱only"
+bool  inRange = not useDate or (time >= fromDate and time <= toDate)
+
+// 금요일 마감 청산(선물용, 기본 off)
+bool fridayFlat = friClose and dayofweek == dayofweek.friday and barstate.isconfirmed and hour >= 14
+if fridayFlat
+    strategy.close_all("주말 청산")
+    strategy.cancel_all()
+
+if strategy.position_size == 0 and inRange and not fridayFlat
+    strategy.cancel_all()   // 이전 봉의 대기주문 갱신
+    if meanrevMode and longSide and longOK
+        strategy.entry("Long",  strategy.long,  limit = prevLow - buffer)    // 회귀 매수 (bSTARS)
+    else if breakoutMode and longSide and longOK
+        strategy.entry("Long",  strategy.long,  stop  = prevHigh)            // 돌파 매수 (bVOLCANO)
+    else if meanrevMode and shortSide and shortOK
+        strategy.entry("Short", strategy.short, limit = prevHigh + buffer)   // 회귀 매도 (sSTARS)
+    else if breakoutMode and shortSide and shortOK
+        strategy.entry("Short", strategy.short, stop  = prevLow)             // 돌파 매도 (sVOLCANO)
+
+// ---------------- ⑤ 청산: ATR 손절 + R배수 단계 트레일링 ----------------
+float exATR = ta.atr(exAtrLen)
+var float rDist   = na    // 1R 거리 (진입 시점 ATR 기준으로 고정)
+var float posHi   = na
+var float posLo   = na
+var float lastStopL = na  // 손절선 절대 완화 금지용
+var float lastStopS = na
+
+float ep = strategy.position_avg_price
+
+// 진입 순간 초기화
+if strategy.position_size > 0 and strategy.position_size[1] <= 0
+    rDist := slMult * exATR
+    posHi := high
+    lastStopL := ep - rDist
+if strategy.position_size < 0 and strategy.position_size[1] >= 0
+    rDist := slMult * exATR
+    posLo := low
+    lastStopS := ep + rDist
+
+// 롱 청산
+if strategy.position_size > 0
+    posHi := math.max(nz(posHi, high), high)
+    float profitR = (close - ep) / rDist
+    float stopNow = ep - rDist                                        // 초기 손절
+    if profitR >= trig2R
+        stopNow := math.max(stopNow, posHi - trail2Mlt * exATR)       // 2단계: 타이트 트레일
+    else if profitR >= trig1R
+        stopNow := math.max(stopNow, posHi - trail1Mlt * exATR)       // 1단계: 넓은 트레일
+    lastStopL := math.max(nz(lastStopL, stopNow), stopNow)            // 절대 완화 금지
+    strategy.exit("L-Stop", from_entry="Long", stop = lastStopL)
+else
+    posHi := na
+    lastStopL := na
+
+// 숏 청산
+if strategy.position_size < 0
+    posLo := math.min(nz(posLo, low), low)
+    float profitR = (ep - close) / rDist
+    float stopNow = ep + rDist
+    if profitR >= trig2R
+        stopNow := math.min(stopNow, posLo + trail2Mlt * exATR)
+    else if profitR >= trig1R
+        stopNow := math.min(stopNow, posLo + trail1Mlt * exATR)
+    lastStopS := math.min(nz(lastStopS, stopNow), stopNow)
+    strategy.exit("S-Stop", from_entry="Short", stop = lastStopS)
+else
+    posLo := na
+    lastStopS := na
+
+// 기간 종료 시 전체 청산
+if useDate and time > toDate
+    strategy.close_all()
+    strategy.cancel_all()
