@@ -35,8 +35,9 @@ float bufMult   = input.float(1.0, "회귀 진입 버퍼 (ATR 배수)", minval=0
 int   bufAtrLen = input.int(14, "버퍼 ATR 기간", minval=1, group=gE)
 string dirMode  = input.string("롱&숏", "매매 방향", options=["롱only","숏only","롱&숏"], group=gE)
 
-string gX = "⑤ 청산 (ATR 손절 + R배수 단계 트레일링)"
+string gX = "⑤ 청산 (분할 + 모드별 + 단계 트레일링)"
 float slMult    = input.float(2.0, "초기 손절 ATR 배수 (=1R)", minval=0.5, step=0.25, group=gX)
+float tp1Pct    = input.float(50, "1차 익절 비율 % (1R에서)", minval=0, maxval=100, step=5, group=gX, tooltip="1R 도달 시 이 비율만큼 부분 익절, 나머지는 러너(트레일/모드별 목표)로 보유")
 float trig1R    = input.float(1.0, "1단계 트레일 시작 (R)", minval=0.1, step=0.25, group=gX)
 float trail1Mlt = input.float(3.0, "1단계 트레일 ATR 배수(넓게)", minval=0.5, step=0.25, group=gX)
 float trig2R    = input.float(2.0, "2단계 트레일 시작 (R)", minval=0.2, step=0.25, group=gX)
@@ -88,8 +89,11 @@ if fridayFlat
     strategy.close_all("주말 청산")
     strategy.cancel_all()
 
+var bool pendingMeanRev = false   // 대기주문이 회귀(true)/돌파(false) 국면에서 걸렸는지
+
 if strategy.position_size == 0 and inRange and not fridayFlat
     strategy.cancel_all()   // 이전 봉의 대기주문 갱신
+    pendingMeanRev := meanrevMode
     if meanrevMode and longSide and longOK
         strategy.entry("Long",  strategy.long,  limit = prevLow - buffer)    // 회귀 매수 (bSTARS)
     else if breakoutMode and longSide and longOK
@@ -99,37 +103,48 @@ if strategy.position_size == 0 and inRange and not fridayFlat
     else if breakoutMode and shortSide and shortOK
         strategy.entry("Short", strategy.short, stop  = prevLow)             // 돌파 매도 (sVOLCANO)
 
-// ---------------- ⑤ 청산: ATR 손절 + R배수 단계 트레일링 ----------------
+// ---------------- ⑤ 청산: 분할(scale-out) + 모드별 목표 + 단계 트레일링 ----------------
+//   · 절반(tp1Pct): 1R 도달 시 부분 익절
+//   · 나머지(러너): 회귀 진입=채널 중심선 목표 / 돌파 진입=트레일링(추세추종)
+//   · 1R 도달 시 손절선 본전(BE)로, 이후 넓은→타이트 트레일 (절대 완화 금지)
 float exATR = ta.atr(exAtrLen)
-var float rDist   = na    // 1R 거리 (진입 시점 ATR 기준으로 고정)
+float mid   = (prevHigh + prevLow) / 2
+var float rDist   = na
 var float posHi   = na
 var float posLo   = na
-var float lastStopL = na  // 손절선 절대 완화 금지용
+var float lastStopL = na
 var float lastStopS = na
+var bool  entryMeanRev = false
 
 float ep = strategy.position_avg_price
 
-// 진입 순간 초기화
+// 진입 순간 초기화 (진입 국면 기록)
 if strategy.position_size > 0 and strategy.position_size[1] <= 0
     rDist := slMult * exATR
     posHi := high
     lastStopL := ep - rDist
+    entryMeanRev := pendingMeanRev
 if strategy.position_size < 0 and strategy.position_size[1] >= 0
     rDist := slMult * exATR
     posLo := low
     lastStopS := ep + rDist
+    entryMeanRev := pendingMeanRev
 
 // 롱 청산
 if strategy.position_size > 0
     posHi := math.max(nz(posHi, high), high)
     float profitR = (close - ep) / rDist
     float stopNow = ep - rDist                                        // 초기 손절
+    if profitR >= trig1R
+        stopNow := math.max(stopNow, ep)                              // 1R → 본전(BE)
+        stopNow := math.max(stopNow, posHi - trail1Mlt * exATR)       // 넓은 트레일
     if profitR >= trig2R
-        stopNow := math.max(stopNow, posHi - trail2Mlt * exATR)       // 2단계: 타이트 트레일
-    else if profitR >= trig1R
-        stopNow := math.max(stopNow, posHi - trail1Mlt * exATR)       // 1단계: 넓은 트레일
+        stopNow := math.max(stopNow, posHi - trail2Mlt * exATR)       // 타이트 트레일
     lastStopL := math.max(nz(lastStopL, stopNow), stopNow)            // 절대 완화 금지
-    strategy.exit("L-Stop", from_entry="Long", stop = lastStopL)
+    float tp1L      = ep + trig1R * rDist                             // 1차 익절 = 1R
+    float runTargetL = entryMeanRev ? mid : na                        // 회귀=중심선, 돌파=트레일만
+    strategy.exit("L-TP1", from_entry="Long", qty_percent = tp1Pct, limit = tp1L, stop = lastStopL)
+    strategy.exit("L-Run", from_entry="Long", limit = runTargetL, stop = lastStopL)
 else
     posHi := na
     lastStopL := na
@@ -139,12 +154,16 @@ if strategy.position_size < 0
     posLo := math.min(nz(posLo, low), low)
     float profitR = (ep - close) / rDist
     float stopNow = ep + rDist
+    if profitR >= trig1R
+        stopNow := math.min(stopNow, ep)                              // 1R → 본전(BE)
+        stopNow := math.min(stopNow, posLo + trail1Mlt * exATR)
     if profitR >= trig2R
         stopNow := math.min(stopNow, posLo + trail2Mlt * exATR)
-    else if profitR >= trig1R
-        stopNow := math.min(stopNow, posLo + trail1Mlt * exATR)
     lastStopS := math.min(nz(lastStopS, stopNow), stopNow)
-    strategy.exit("S-Stop", from_entry="Short", stop = lastStopS)
+    float tp1S      = ep - trig1R * rDist
+    float runTargetS = entryMeanRev ? mid : na
+    strategy.exit("S-TP1", from_entry="Short", qty_percent = tp1Pct, limit = tp1S, stop = lastStopS)
+    strategy.exit("S-Run", from_entry="Short", limit = runTargetS, stop = lastStopS)
 else
     posLo := na
     lastStopS := na
