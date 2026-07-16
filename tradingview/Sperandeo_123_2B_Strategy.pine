@@ -9,7 +9,7 @@
 //  신호는 봉 마감 시 확정(피벗 n봉 지연 → 룩어헤드 없음), 다음 봉 시가 체결.
 //  주의: 재량적 개념의 근사치입니다. 기간(n)/시간프레임/수수료 가정에 따라 결과가 달라집니다.
 // =====================================================================
-strategy("Sperandeo 3 & 2B Strategy", overlay=true, max_labels_count=500, max_lines_count=100,
+strategy("Reversal 123_Strategy", overlay=true, max_labels_count=500, max_lines_count=100,
      initial_capital=10000000, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
      commission_type=strategy.commission.percent, commission_value=0.15, pyramiding=0, calc_on_every_tick=false)
 
