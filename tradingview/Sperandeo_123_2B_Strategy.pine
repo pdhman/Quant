@@ -26,6 +26,11 @@ bool   useStop    = input.bool(true, "구조적 손절 + 트레일링 사용", g
 float  atrMult    = input.float(3.0, "트레일링 ATR 배수(샹들리에)", minval=0.5, step=0.5, group=gEx)
 float  atrBuf     = input.float(0.5, "구조적 손절 ATR 버퍼", minval=0.0, step=0.1, group=gEx)
 int    exitAtrLen = input.int(14, "청산 ATR 기간", minval=1, group=gEx)
+
+string gTP = "고정 TP/SL"
+bool   useTPSL = input.bool(false, "고정 익절/손절 사용", group=gTP, tooltip="진입가 기준 고정 % 익절/손절. 트레일링과 함께 켜면 손절은 둘 중 더 타이트한 쪽이 적용됨")
+float  tpPerc  = input.float(3.0, "익절 %", minval=0.0, step=0.1, group=gTP)
+float  slPerc  = input.float(2.0, "손절 %", minval=0.0, step=0.1, group=gTP)
 bool   useDate = input.bool(false, "기간 제한", group=gBT)
 int    fromDate= input.time(timestamp("2016-01-01T00:00"), "시작", group=gBT)
 int    toDate  = input.time(timestamp("2027-01-01T00:00"), "종료", group=gBT)
@@ -274,45 +279,59 @@ if inRange
             strategy.close("Long")                          // 롱only: 매도신호=롱 청산
 
 // ---------------------------------------------------------------------
-//  청산: 구조적 손절 + ATR 트레일링 (샹들리에)
-//   - 최초 손절: 롱=직전 스윙저점(dn1) 아래 / 숏=직전 스윙고점(up1) 위 (ATR 버퍼)
-//   - 트레일링: 진입 후 최고가-ATR×배수(롱) / 최저가+ATR×배수(숏), 손절은 절대 느슨해지지 않음
+//  청산: (A) 구조적 손절 + ATR 트레일링  +  (B) 고정 TP/SL  통합
+//   - 손절선 = 활성화된 것 중 '더 타이트한' 쪽 (둘 다 켜면 max(롱)/min(숏))
+//   - 익절 = 고정 TP(%) limit  (트레일링만 쓰면 익절 목표 없음)
 //   - 반대 신호 청산은 위 진입 로직에서 유지(fallback)
 // ---------------------------------------------------------------------
 float exATR = ta.atr(exitAtrLen)
+float ep = strategy.position_avg_price
 var float longStructStop  = na
 var float shortStructStop = na
 var float posHi = na
 var float posLo = na
 
-if useStop
-    // 진입 순간 구조적 손절 세팅
-    if strategy.position_size > 0 and strategy.position_size[1] <= 0
-        longStructStop := (not na(dn1) ? dn1 : low) - atrBuf * exATR
-        posHi := high
-    if strategy.position_size < 0 and strategy.position_size[1] >= 0
-        shortStructStop := (not na(up1) ? up1 : high) + atrBuf * exATR
-        posLo := low
+// 진입 순간 구조적 손절/추적 초기화
+if strategy.position_size > 0 and strategy.position_size[1] <= 0
+    longStructStop := (not na(dn1) ? dn1 : low) - atrBuf * exATR
+    posHi := high
+if strategy.position_size < 0 and strategy.position_size[1] >= 0
+    shortStructStop := (not na(up1) ? up1 : high) + atrBuf * exATR
+    posLo := low
 
-    // 롱: 구조적 손절 + 상향 트레일링
-    if strategy.position_size > 0
-        posHi := math.max(nz(posHi, high), high)
+// 롱 청산
+if strategy.position_size > 0
+    posHi := math.max(nz(posHi, high), high)
+    float sLvl = na
+    if useStop
         float chandL = posHi - atrMult * exATR
-        float longStop = math.max(nz(longStructStop, chandL), chandL)
-        strategy.exit("Long Stop", from_entry="Long", stop = longStop)
-    else
-        longStructStop := na
-        posHi := na
+        sLvl := math.max(nz(longStructStop, chandL), chandL)          // 구조적+트레일링
+    if useTPSL and slPerc > 0
+        float fixedSL = ep * (1 - slPerc / 100)
+        sLvl := na(sLvl) ? fixedSL : math.max(sLvl, fixedSL)          // 둘 다면 더 타이트
+    float tLvl = (useTPSL and tpPerc > 0) ? ep * (1 + tpPerc / 100) : na
+    if not na(sLvl) or not na(tLvl)
+        strategy.exit("Long Exit", from_entry="Long", stop = sLvl, limit = tLvl)
+else
+    longStructStop := na
+    posHi := na
 
-    // 숏: 구조적 손절 + 하향 트레일링
-    if strategy.position_size < 0
-        posLo := math.min(nz(posLo, low), low)
+// 숏 청산
+if strategy.position_size < 0
+    posLo := math.min(nz(posLo, low), low)
+    float sLvlS = na
+    if useStop
         float chandS = posLo + atrMult * exATR
-        float shortStop = math.min(nz(shortStructStop, chandS), chandS)
-        strategy.exit("Short Stop", from_entry="Short", stop = shortStop)
-    else
-        shortStructStop := na
-        posLo := na
+        sLvlS := math.min(nz(shortStructStop, chandS), chandS)
+    if useTPSL and slPerc > 0
+        float fixedSLS = ep * (1 + slPerc / 100)
+        sLvlS := na(sLvlS) ? fixedSLS : math.min(sLvlS, fixedSLS)
+    float tLvlS = (useTPSL and tpPerc > 0) ? ep * (1 - tpPerc / 100) : na
+    if not na(sLvlS) or not na(tLvlS)
+        strategy.exit("Short Exit", from_entry="Short", stop = sLvlS, limit = tLvlS)
+else
+    shortStructStop := na
+    posLo := na
 
 // 기간 종료 시 전체 청산
 if useDate and time > toDate
