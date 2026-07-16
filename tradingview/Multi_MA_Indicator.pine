@@ -27,37 +27,40 @@ plot(sma240, color=color.rgb(226, 224, 85),    linewidth=3, title="SMA 240")
 
 
 // =========================================================
-//  관심종목 EMA10 크로스 알람
+//  관심종목 10주 EMA 실시간(1분 단위) 크로스 알람
 // ---------------------------------------------------------
-//  - 아래 관심종목이 EMA10 선을 "종가 기준"으로 돌파하면 알람 발생
-//  - 차트에 어떤 종목을 띄워도, 지정한 관심종목 전체를 감시함
+//  - EMA선은 "주봉" 기준으로 계산 (기본 10주 EMA)
+//  - 돌파 판정은 "현재 차트 타임프레임(권장: 1분봉)" 기준
+//    → 주 마감을 기다리지 않고 1분마다 재확인, 새 돌파 때마다 재발송
+//  - request.security 는 종목당 1회만 사용 (주봉 EMA + 현재가를 tuple로)
+//    → 20종목 × 1회 = 20회 (Pine 호출 한도 40 이내)
 //  - 알람 설정법 (한 번만):
 //      지표 우클릭 → "알림 추가" → 조건에서 "다중 MA" 선택
 //      → "Any alert() function call" 선택 → 생성
 //    (이 알람 1개로 아래 20종목 전부 커버됩니다)
+//  ※ 차트에는 거래가 활발한 종목(예: 삼성전자)을 1분봉으로 띄우세요.
+//    스크립트는 차트 종목의 틱이 올 때마다 20종목을 재평가합니다.
 // =========================================================
-emaLen  = input.int(10, "알람 기준 EMA 길이", minval=1)
-// "W"=주봉 / "D"=일봉 / 공백("")=현재 차트 타임프레임
-alertTF = input.timeframe("W", "알람 타임프레임 (기본=주봉)")
+emaLen = input.int(10, "알람 기준 EMA 길이", minval=1)
+// EMA선 계산 타임프레임: "W"=주봉 / "D"=일봉
+maTF   = input.timeframe("W", "EMA 기준 타임프레임 (기본=주봉)")
 
-// 한 종목의 EMA 상향/하향 돌파 여부 + 해당 봉의 시작시간 계산
+// 주봉 EMA + 주봉 진행중 종가(=현재가)를 한 번의 호출로 가져오고,
+// 크로스는 현재 차트(1분봉) 기준으로 판정 → 1분 단위 재확인/재발송
 f_cross(simple string sym) =>
-    [u, d, t] = request.security(sym, alertTF, [ta.crossover(close, ta.ema(close, emaLen)), ta.crossunder(close, ta.ema(close, emaLen)), time])
-    [u, d, t]
+    [emaW, priceNow] = request.security(sym, maTF, [ta.ema(close, emaLen), close], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    up = ta.crossover(priceNow, emaW)
+    dn = ta.crossunder(priceNow, emaW)
+    [up, dn, emaW, priceNow]
 
-// 종목별로 검사 후 돌파 시 알람 발송
-// 같은 봉(주봉)에서는 종목당 1회만 발송 → 주말/휴일에 차트 봉이 새로 생겨도 반복 알람 없음
+// 종목별로 검사 후 돌파 시 알람 발송 (1분봉 기준 봉당 최대 1회 → 새 돌파마다 재발송)
 f_alert(simple string code, simple string name) =>
-    [up, dn, barT] = f_cross("KRX:" + code)
-    var int lastUpBar = na
-    var int lastDnBar = na
+    [up, dn, emaW, priceNow] = f_cross("KRX:" + code)
     tag = name == "" ? code : name + "(" + code + ")"
-    if up and barT != lastUpBar
-        alert(tag + " 📈 EMA" + str.tostring(emaLen) + " 상향 돌파", alert.freq_once_per_bar)
-        lastUpBar := barT
-    if dn and barT != lastDnBar
-        alert(tag + " 📉 EMA" + str.tostring(emaLen) + " 하향 돌파", alert.freq_once_per_bar)
-        lastDnBar := barT
+    if up
+        alert(tag + " 📈 EMA" + str.tostring(emaLen) + "(" + maTF + ") 상향 돌파" + " / 현재가 " + str.tostring(math.round(priceNow)) + " / EMA " + str.tostring(math.round(emaW)), alert.freq_once_per_bar)
+    if dn
+        alert(tag + " 📉 EMA" + str.tostring(emaLen) + "(" + maTF + ") 하향 돌파" + " / 현재가 " + str.tostring(math.round(priceNow)) + " / EMA " + str.tostring(math.round(emaW)), alert.freq_once_per_bar)
 
 // ---- 보유 종목 ----
 f_alert("005930", "삼성전자")
