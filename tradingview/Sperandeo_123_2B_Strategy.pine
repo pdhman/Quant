@@ -18,6 +18,8 @@ string gP  = "Pivot"
 int    n   = input.int(5, "Pivot(프랙탈) 기간", minval=2, group=gP, tooltip="작을수록 민감. 3=매우 민감, 5=민감, 10=둔감")
 
 string gBT = "백테스트 진입/청산"
+bool   useP1   = input.bool(false, "점1(추세선 돌파) 신호로 매매 — 공격적", group=gBT, tooltip="1-2-3 확정 전, 점1(추세선 돌파)에서 조기 진입. 방향은 동일(하단=매수/상단=매도)이나 신뢰도 낮음")
+bool   useP2   = input.bool(false, "점2(되돌림) 신호로 매매 — 공격적", group=gBT, tooltip="점2(되돌림 피벗) 형성 시 진입. 점3 확정 전이라 공격적")
 bool   useP3   = input.bool(true,  "점3(추세전환) 신호로 매매", group=gBT)
 bool   use2B   = input.bool(true,  "2B 신호로 매매", group=gBT)
 string dirMode = input.string("롱only", "매매 방향", options=["롱only","숏only","롱&숏"], group=gBT)
@@ -121,7 +123,11 @@ mk(int x, float y, string txt, bool below, color col) =>
     label.new(x, y, txt, style = below ? label.style_label_up : label.style_label_down, color = color.new(col, labelTransp), textcolor = color.white, size = size.small)
 
 // 신호 플래그 (매 봉 초기화)
+bool fireTop1 = false      // 상단 점1 (추세선 하향돌파) → 매도(공격적)
+bool fireTop2 = false      // 상단 점2 (되돌림 고점)      → 매도(공격적)
 bool fireTop3 = false      // 상단 점3 (하락전환 확정)  → 매도
+bool fireBot1 = false      // 하단 점1 (추세선 상향돌파) → 매수(공격적)
+bool fireBot2 = false      // 하단 점2 (되돌림 저점)      → 매수(공격적)
 bool fireBot3 = false      // 하단 점3 (상승전환 확정)  → 매수
 bool fire2Bbear = false    // 하락형 2B                 → 매도
 bool fire2Bbull = false    // 상승형 2B                 → 매수
@@ -158,11 +164,13 @@ if show123
         topLow := na
         topStartBar := bar_index
         mk(bar_index, high, "1", false, colTop)
+        fireTop1 := true
     // 점 2 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
     if topSt == 1 and not na(ph) and not na(topHigh) and ph < topHigh + tol and (bar_index - n) > topStartBar
         topSt := 2
         topLow := dn1
         mk(bar_index - n, ph, "2", false, colTop)
+        fireTop2 := true
     // 점 3
     if topSt == 2 and not na(topLow) and topLowBreak
         topSt := 0
@@ -200,11 +208,13 @@ if show123
         botHigh := na
         botStartBar := bar_index
         mk(bar_index, low, "1", true, colBot)
+        fireBot1 := true
     // 점 2 (피벗이 점1 이후에 형성된 경우만 → 순서 보장)
     if botSt == 1 and not na(pl) and not na(botLow) and pl > botLow - tol and (bar_index - n) > botStartBar
         botSt := 2
         botHigh := up1
         mk(bar_index - n, pl, "2", true, colBot)
+        fireBot2 := true
     // 점 3
     if botSt == 2 and not na(botHigh) and botHighBreak
         botSt := 0
@@ -264,8 +274,8 @@ if show2b
 // ---------------------------------------------------------------------
 //  전략 진입/청산
 // ---------------------------------------------------------------------
-bool bullSig = (useP3 and fireBot3) or (use2B and fire2Bbull)   // 매수 신호
-bool bearSig = (useP3 and fireTop3) or (use2B and fire2Bbear)   // 매도 신호
+bool bullSig = (useP1 and fireBot1) or (useP2 and fireBot2) or (useP3 and fireBot3) or (use2B and fire2Bbull)   // 매수 신호
+bool bearSig = (useP1 and fireTop1) or (useP2 and fireTop2) or (useP3 and fireTop3) or (use2B and fire2Bbear)   // 매도 신호
 
 bool inRange = not useDate or (time >= fromDate and time <= toDate)
 bool longOK  = dirMode != "숏only"
