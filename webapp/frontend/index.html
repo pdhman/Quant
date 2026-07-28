@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>My Backtest Tool</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root { --bg:#0e1117; --panel:#161b22; --border:#30363d; --text:#e6edf3;
+          --muted:#8b949e; --accent:#2962FF; --green:#26a69a; --red:#ef5350; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--text); height:100vh; display:flex; overflow:hidden; }
+  #sidebar { width:340px; min-width:340px; background:var(--panel); border-right:1px solid var(--border);
+             padding:16px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:8px 0 4px; }
+  label { font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
+  input, select, textarea, button {
+    width:100%; background:#0d1117; color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:8px; font-size:13px; font-family:inherit; }
+  textarea { min-height:120px; font-family:ui-monospace,Menlo,monospace; font-size:12px; resize:vertical; }
+  button { cursor:pointer; background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:hover { opacity:.9; } button:disabled { opacity:.5; cursor:default; }
+  .row { position:relative; }
+  #results { position:absolute; z-index:20; left:0; right:0; background:#0d1117; border:1px solid var(--border);
+             border-radius:6px; margin-top:2px; max-height:260px; overflow-y:auto; display:none; }
+  #results div { padding:8px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; }
+  #results div:hover { background:#161b22; }
+  #results small { color:var(--muted); }
+  #topbar { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:baseline; gap:12px; }
+  #ticker { font-size:18px; font-weight:700; } #tname { color:var(--muted); font-size:14px; }
+  #chart { flex:1; min-height:0; } #eqchart { height:150px; border-top:1px solid var(--border); }
+  .metrics { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .metric { background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:8px; }
+  .metric .k { font-size:11px; color:var(--muted); } .metric .v { font-size:16px; font-weight:700; }
+  .pos { color:var(--green); } .neg { color:var(--red); }
+  .params { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .params label { margin:0; } .hint { font-size:11px; color:var(--muted); }
+  .tabs { display:flex; gap:6px; } .tab { flex:1; text-align:center; padding:6px; font-size:12px;
+     border:1px solid var(--border); border-radius:6px; cursor:pointer; background:#0d1117; color:var(--muted); }
+  .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>📈 My Backtest Tool</h1>
+    <div class="row">
+      <label>종목 검색</label>
+      <input id="search" placeholder="삼성전자 / 005930" autocomplete="off" />
+      <div id="results"></div>
+    </div>
+
+    <div>
+      <h2>기간</h2>
+      <div class="params">
+        <div><label>시작</label><input id="start" value="2020-01-01" /></div>
+        <div><label>종료</label><input id="end" placeholder="오늘" /></div>
+      </div>
+    </div>
+
+    <div>
+      <h2>전략</h2>
+      <div class="tabs">
+        <div class="tab active" data-mode="builtin">내장 전략</div>
+        <div class="tab" data-mode="custom">직접 입력</div>
+      </div>
+      <div id="builtinBox" style="margin-top:8px;">
+        <select id="strategy"></select>
+        <div class="params" id="paramBox" style="margin-top:8px;"></div>
+      </div>
+      <div id="customBox" style="margin-top:8px; display:none;">
+        <label>파이썬 Strategy 코드</label>
+        <textarea id="customCode">from backtesting import Strategy
+from backtesting.lib import crossover
+
+class MyStrategy(Strategy):
+    n1 = 5
+    n2 = 20
+    def init(self):
+        self.a = self.I(SMA, self.data.Close, self.n1)
+        self.b = self.I(SMA, self.data.Close, self.n2)
+    def next(self):
+        if crossover(self.a, self.b):
+            self.buy()
+        elif crossover(self.b, self.a):
+            self.position.close()</textarea>
+        <div class="hint">Strategy 상속 클래스 1개. 사용가능: SMA, crossover, pd, np</div>
+      </div>
+    </div>
+
+    <div class="params">
+      <div><label>초기자본</label><input id="cash" value="10000000" /></div>
+      <div><label>수수료</label><input id="commission" value="0.0005" /></div>
+    </div>
+
+    <button id="run">백테스트 실행 ▶</button>
+
+    <div>
+      <h2>결과</h2>
+      <div class="metrics" id="metrics"><span class="hint">전략을 실행하세요.</span></div>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="topbar">
+      <span id="ticker">—</span><span id="tname"></span>
+      <span id="status" style="margin-left:auto; color:var(--muted); font-size:12px;"></span>
+    </div>
+    <div id="chart"></div>
+    <div id="eqchart"></div>
+  </div>
+
+<script>
+const API = "";  // 동일 오리진
+let chart, candleSeries, eqChart, eqSeries, curCode = null;
+
+function initCharts() {
+  const common = { layout:{background:{color:'#0e1117'},textColor:'#e6edf3'},
+    grid:{vertLines:{color:'#1c2128'},horzLines:{color:'#1c2128'}},
+    rightPriceScale:{borderColor:'#30363d'}, timeScale:{borderColor:'#30363d'},
+    crosshair:{mode:0} };
+  chart = LightweightCharts.createChart(document.getElementById('chart'), common);
+  candleSeries = chart.addCandlestickSeries({
+    upColor:'#26a69a', downColor:'#ef5350', borderVisible:false,
+    wickUpColor:'#26a69a', wickDownColor:'#ef5350' });
+  eqChart = LightweightCharts.createChart(document.getElementById('eqchart'), common);
+  eqSeries = eqChart.addAreaSeries({ lineColor:'#2962FF', topColor:'rgba(41,98,255,.4)',
+    bottomColor:'rgba(41,98,255,0)', lineWidth:2 });
+  new ResizeObserver(() => {
+    chart.applyOptions({width:document.getElementById('chart').clientWidth, height:document.getElementById('chart').clientHeight});
+    eqChart.applyOptions({width:document.getElementById('eqchart').clientWidth, height:document.getElementById('eqchart').clientHeight});
+  }).observe(document.getElementById('main'));
+}
+
+function setStatus(s){ document.getElementById('status').textContent = s; }
+
+async function loadChart(code) {
+  setStatus('차트 로딩…');
+  const start = document.getElementById('start').value || '2020-01-01';
+  const end = document.getElementById('end').value;
+  const url = `${API}/api/ohlcv?code=${code}&start=${start}` + (end?`&end=${end}`:'');
+  const r = await fetch(url); const j = await r.json();
+  if (!r.ok) { setStatus('오류: '+(j.detail||'')); return; }
+  curCode = code;
+  candleSeries.setData(j.candles);
+  candleSeries.setMarkers([]);
+  document.getElementById('ticker').textContent = code;
+  document.getElementById('tname').textContent = j.name || '';
+  chart.timeScale().fitContent();
+  setStatus(`${j.candles.length} 봉 로드됨`);
+}
+
+// ---- 종목검색 ----
+let searchTimer;
+const searchInput = document.getElementById('search');
+const resultsBox = document.getElementById('results');
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchInput.value.trim();
+  if (!q) { resultsBox.style.display='none'; return; }
+  searchTimer = setTimeout(async () => {
+    const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    resultsBox.innerHTML = (j.results||[]).map(x =>
+      `<div data-code="${x.code}">${x.name} <small>${x.code} · ${x.market||''}</small></div>`).join('');
+    resultsBox.style.display = j.results && j.results.length ? 'block' : 'none';
+  }, 250);
+});
+resultsBox.addEventListener('click', e => {
+  const d = e.target.closest('[data-code]'); if (!d) return;
+  searchInput.value = d.textContent.trim();
+  resultsBox.style.display='none';
+  loadChart(d.dataset.code);
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.row')) resultsBox.style.display='none';
+});
+
+// ---- 전략 탭 ----
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  const custom = t.dataset.mode === 'custom';
+  document.getElementById('builtinBox').style.display = custom?'none':'block';
+  document.getElementById('customBox').style.display = custom?'block':'none';
+}));
+
+// ---- 전략 목록/파라미터 ----
+let STRATS = [];
+async function loadStrategies() {
+  const r = await fetch(`${API}/api/strategies`); const j = await r.json();
+  STRATS = j.strategies;
+  document.getElementById('strategy').innerHTML =
+    STRATS.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+  renderParams();
+}
+function renderParams() {
+  const id = document.getElementById('strategy').value;
+  const s = STRATS.find(x => x.id === id); if (!s) return;
+  document.getElementById('paramBox').innerHTML = Object.entries(s.params).map(([k,v]) =>
+    `<div><label>${k}</label><input class="p" data-k="${k}" value="${v}"></div>`).join('');
+}
+document.getElementById('strategy').addEventListener('change', renderParams);
+
+// ---- 실행 ----
+document.getElementById('run').addEventListener('click', async () => {
+  if (!curCode) { setStatus('먼저 종목을 선택하세요.'); return; }
+  const btn = document.getElementById('run'); btn.disabled = true; setStatus('백테스트 실행 중…');
+  const custom = document.querySelector('.tab.active').dataset.mode === 'custom';
+  const body = {
+    code: curCode,
+    start: document.getElementById('start').value || '2020-01-01',
+    end: document.getElementById('end').value || null,
+    cash: parseFloat(document.getElementById('cash').value),
+    commission: parseFloat(document.getElementById('commission').value),
+  };
+  if (custom) {
+    body.custom_code = document.getElementById('customCode').value;
+  } else {
+    body.strategy = document.getElementById('strategy').value;
+    const params = {};
+    document.querySelectorAll('.p').forEach(i => params[i.dataset.k] = parseFloat(i.value));
+    body.params = params;
+  }
+  try {
+    const r = await fetch(`${API}/api/backtest`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) { setStatus('오류: '+(j.detail||'')); return; }
+    candleSeries.setMarkers(j.markers);
+    eqSeries.setData(j.equity);
+    eqChart.timeScale().fitContent();
+    renderMetrics(j.metrics);
+    setStatus(`완료 · ${j.metrics.num_trades} 회 매매`);
+  } catch (err) { setStatus('오류: '+err); }
+  finally { btn.disabled = false; }
+});
+
+function renderMetrics(m) {
+  const cls = v => v==null?'':(v>=0?'pos':'neg');
+  const pct = v => v==null?'—':v.toFixed(2)+'%';
+  const items = [
+    ['총수익률', pct(m.return_pct), cls(m.return_pct)],
+    ['Buy&Hold', pct(m.buyhold_pct), cls(m.buyhold_pct)],
+    ['CAGR', pct(m.cagr_pct), cls(m.cagr_pct)],
+    ['MDD', pct(m.mdd_pct), 'neg'],
+    ['승률', pct(m.winrate_pct), ''],
+    ['Profit Factor', m.profit_factor==null?'—':m.profit_factor.toFixed(2), ''],
+    ['Sharpe', m.sharpe==null?'—':m.sharpe.toFixed(2), ''],
+    ['매매횟수', m.num_trades, ''],
+  ];
+  document.getElementById('metrics').innerHTML = items.map(([k,v,c]) =>
+    `<div class="metric"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join('');
+}
+
+// ---- 부팅 ----
+initCharts();
+loadStrategies();
+loadChart('005930');  // 기본: 삼성전자
+</script>
+</body>
+</html>
